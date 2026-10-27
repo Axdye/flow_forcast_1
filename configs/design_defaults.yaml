@@ -1,0 +1,79 @@
+# 设计参考配置；不是已可执行的实验入口。路径由实现者配置。
+schema_version: 1
+protocol_id: flow_12x12_v1
+seed: 11
+data:
+  dataset: PEMS08
+  input_steps: 12
+  output_steps: 12
+  split_ratios: [0.6, 0.2, 0.2]
+  scaler: global_standard_train_only
+  missing_policy: source_mask_else_nonfinite
+  zeros_are_valid: true
+  envelope_quantile: 0.995
+  envelope_min_count: 1000
+  mape_min_abs_target: 1.0
+graph:
+  topology: published_binary_undirected
+  diffusion: row_normalized_with_self_loops
+  representation: sparse_coo
+backbone:
+  name: staeformer
+  mode: frozen
+  input_dim: 1
+  use_mixed_proj: true
+adapter:
+  num_candidates: 8
+  hidden_dim: 64
+  residual_dim: 32
+  graph_hops: 3
+  sigma_min: 0.05
+  local_branch: false
+  film: false
+  s_p: 1.0
+  s_o: 0.5
+  s_d: 0.5
+  residual_scale: 3.0
+  output_init_std: 0.001
+  action_ranges:
+    delay: [0.25, 3.0]
+    magnitude: [-3.0, 3.0]
+    duration: [1.0, 12.0]
+    recovery: [0.01, 1.0]
+oracle:
+  alpha: 1.0
+  temperature: 0.5
+  std_floor: 0.001
+  std_correction: 0
+loss:
+  consistency: 0.0
+  penalty_negative: 1.0
+  penalty_envelope: 1.0
+  penalty_spatial: 0.1
+  epsilon_floor: 0.05
+  separation: 0.01
+  separation_margin: 0.25
+  router_kl: 1.0
+  regret: 0.2
+  balance_max: 0.01
+training:
+  precision: fp32
+  initial_batch_size: 32
+  accumulation: 1
+  base_lr: 0.001
+  candidate_lr: 0.001
+  router_lr: 0.0003
+  weight_decay: 0.0001
+  gradient_clip: 5.0
+  max_epochs: {base: 100, candidates: 80, router: 40}
+  patience: {base: 15, candidates: 15, router: 10}
+  scheduler: constant
+  checkpoint_min_delta: 0.00001
+  freeze_candidates_for_router: true
+evaluation:
+  primary_metric: raw_mae_all
+  horizons: [3, 6, 12]
+  clip_predictions: false
+  selection_granularity: whole_sample_trajectory
+  bootstrap_replicates: 10000
+  block_origins: 288

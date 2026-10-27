@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-28",
+  "source_thread_id": "01a17e34-dff2-70f3-9644-bf5204feed01",
+  "local_design_sources": [
+    {
+      "path": "/Users/ljw/Documents/ChatGPT/毕设/新论文详细设计/01_新论文故事线.md",
+      "sha256": "d38edccfa0d32eaaeb68656db564a87f5034f0faea2f54063d66f48cc6731347",
+      "bytes": 21639
+    },
+    {
+      "path": "/Users/ljw/Documents/ChatGPT/毕设/新论文详细设计/02_代码与实验详细设计.md",
+      "sha256": "f32eb8ac5ecb9109ae3c72eb010fe40c495ebcf48b1a58a77c09932c577e3bbc",
+      "bytes": 33152
+    },
+    {
+      "path": "/Users/ljw/Documents/ChatGPT/毕设/新论文详细设计/03_旧论文改造成新论文.md",
+      "sha256": "d5e1d88a21922b0607aa491baaa885314f894e7c5e22077ba92349a26e4a3f9b",
+      "bytes": 25413
+    }
+  ],
+  "staeformer": {
+    "repository": "https://github.com/XDZhelheim/STAEformer",
+    "commit": "fc49d39b2f1a8e3cf37b6289d7240680e1690f3f",
+    "file": "model/STAEformer.py",
+    "sha256": "fb2292ae1a1259131fafb16392c6b76097d16bc7fb1c36c6d3ce97ebe7be76c7",
+    "source": "local_git_object_not_dirty_worktree",
+    "runtime_verified": false
+  },
+  "pending_commits": [
+    "Graph-WaveNet",
+    "AGCRN",
+    "STID"
+  ]
+}
