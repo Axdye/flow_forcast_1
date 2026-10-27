@@ -2,7 +2,7 @@
 
 版本：v1.0 · 2026-10-28（Asia/Shanghai） · 计划硬件：1–4 × NVIDIA A100 80GB。
 
-**当前交付是设计文档仓库，不是已经实现、通过测试或得到论文结果的代码仓库。** 下文命令均为后续必须实现的接口。所有科学主张仍需实验检验。目标安装路径为 `/Users/ljw/Documents/code/SBoN-Adapter`。
+**当前交付已包含 v1 代码实现与 CPU/synthetic 验证，但尚未完成 GPU smoke、真实数据训练或任何论文结果。** 下文 CLI 已实现；所有科学主张仍需实验检验。实现与验证状态见 `reviews/STATUS.md` 和 `reviews/HANDOFF.md`。目标安装路径为 `/Users/ljw/Documents/code/SBoN-Adapter`。
 
 研究对象是**交通流多步预测**，不是交通信号控制，不训练大语言模型。DeepSeek 是代码实现协作者；A100 用于交通预测模型训练和实验。
 
@@ -40,7 +40,7 @@
 | D2 科学 pilot | 两数据集多种子候选与路由证据、失败分析 | 不代表跨 backbone 泛化 |
 | D3 论文证据 | 锁定协议、主表/消融/成本/置信区间自动生成 | 不自动构成 SOTA |
 
-当前：D0。`reviews/STATUS.md` 中不得预先勾选 D1–D3。
+当前：D0（v1 代码已实现，但 GPU smoke 与真实数据训练未执行，不能宣称 D1）。`reviews/STATUS.md` 中不得预先勾选 D1–D3。
 
 ## 开发启动顺序
 
@@ -48,7 +48,7 @@
 
 工程闭环后，按实验文档的 Gate 顺序开跑；发现科学假设不成立可以交付正确的失败结果，不能为通过验收更改测试集或指标。
 
-## 未来 CLI 合同（尚未实现）
+## CLI 合同（已实现）
 
 ```bash
 python -m sbona.cli prepare-data --config configs/experiments/pems08.yaml
@@ -61,4 +61,4 @@ python -m sbona.cli profile --run outputs/RUN_ID --batch-sizes 1 64
 python -m sbona.cli aggregate --manifest experiments.csv
 ```
 
-最终工程至少需要 `pyproject.toml`、真实依赖 lock、可运行 CLI、CPU CI、GPU smoke 脚本及测试。现在不放空函数冒充已实现模块。
+当前仓库已包含 `pyproject.toml`、可运行 CLI、CPU 测试与 GPU smoke 脚本；尚缺真实依赖 lock 与 CI 配置，GPU smoke 未执行。空函数/占位模块不会被当作已实现。
