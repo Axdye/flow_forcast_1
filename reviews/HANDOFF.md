@@ -2,7 +2,7 @@
 
 日期：2026-10-28。
 对应设计合同：`docs/README_CODE_DESIGN.md`（最高优先级）。
-当前等级：**D0**；代码已实现，验证未达到 D1。
+当前等级：**D0**；代码已实现，验证未达到 D1。计划外实现与已知偏离见 `reviews/EXTRA_WORK.md`。
 
 ## 1. 已实现范围
 
@@ -47,10 +47,10 @@
 ```bash
 cd /Users/ljw/Documents/code/SBoN-Adapter
 python -m pytest -q
-# 52 passed, 1 skipped
+# 65 passed, 1 skipped
 # skipped: tests/gpu/test_gpu_smoke.py (CUDA unavailable)
 
-ruff check src tests
+ruff check src tests scripts
 # All checks passed
 
 python -m compileall -q src/sbona
@@ -110,11 +110,11 @@ python -m sbona.cli prepare-data \
 ## 4. 明确未完成 / 阻塞
 
 - **GPU smoke 未执行**：当前机器无 CUDA；不能声称 A100 显存、吞吐、bf16 或 DDP 行为。
-- **真实数据训练未执行**：没有 PEMS08 checkpoint、真实 MAE、Router 收益或 oracle 分析。
+- **真实数据训练未执行**：没有任何真实数据集的 checkpoint、真实 MAE、Router 收益或 oracle 分析。
 - **STID / Graph WaveNet / AGCRN 未实现**：缺 pinned commit/许可证/等价验证，配置会 fail-fast，不冒充支持。
 - **依赖 lock 与 CI 未提供**：`pyproject.toml` 有依赖声明，但无锁文件/CI workflow。
-- **日历来源是起始日期而非发布方原始时间戳**：`scripts/build_calendar.py` 从记录在案的起始日期生成 `datetime64[s]` 轴，并用周末/工作日流量比做一致性校验。若拿到原始时间戳应替换 `data/<NAME>/calendar.npz` 并重跑 `prepare-data`。
-- **METR-LA / PEMS-BAY 只完成数据下载与核验**：缺 `derived_binary_undirected` 拓扑标签与 speed 单位协议，配置会拒绝，不能声称可训练。
+- **日历来源是数据自带 tod/dow 通道 + 有记录的起始星期**：`scripts/build_calendar.py` 的通道模式保留原始 tod（包括 PEMS-BAY 的 1 小时缺口），只施加常量星期相位偏移；均匀模式则从记录在案的起始时间生成。两种模式都用周末/工作日比值做一致性检查，但不是发布方原始时间戳证明。若拿到原始时间戳应替换 `data/<NAME>/calendar.npz` 并重跑 `prepare-data`。
+- **METR-LA / PEMS-BAY 已接入配置但未训练**：`derived_binary_undirected` 与 `speed (mph)` 协议已实现，`prepare-data` 与 CPU 前向通过；没有 checkpoint 或指标，不能声称可复现论文结果。
 - **probe 对数据长度有要求**：小型 synthetic fixture 会因 R/Q 窗口不足而 fail-fast；1200 步 synthetic 已验证可运行。
 - **上游 STAEformer 许可**：本地 pin commit `fc49d39b2f1a8e3cf37b6289d7240680e1690f3f` 无 LICENSE，因此本仓按其架构重实现，未直接复制源码。
 
@@ -124,7 +124,8 @@ python -m sbona.cli prepare-data \
 - 新增 `data.timestamps_file` 配置项：支持 `.npy`/`.npz` 的 `datetime64 [M]`、整数 `[M]` 或 `(tod, dow) [M,2]` 表；文件 sha256 进入 prepare signature，改动即重建。
 - `build_calendar` 新增 `[M,2]` 分支，要求 tod ∈ [0,1)、dow 为整数 0..6；不再默默把全零当周一。
 - 四个 PEMS 配置已启用 `day_of_week: true` 与 `dow_embedding_dim: 24`（上游默认值）；PEMS08 CPU 前向已验证嵌入路径。
-- METR-LA / PEMS-BAY 的邻接取自 Zenodo 5724362（CC-BY-4.0），已核验节点顺序与起始时间；转换后 METR-LA 1313 条无向边、PEMS-BAY 2079 条。详见 `reviews/DATA_PROVENANCE.md`。
+- METR-LA / PEMS-BAY 的邻接取自 Zenodo 5724362（CC-BY-4.0），已核验节点顺序与起始时间；转换后 METR-LA 1313 条无向边、PEMS-BAY 2079 条。配置使用 `derived_binary_undirected`（上游矩阵非对称）、`data.unit: speed (mph)` 与 `official_compat_nonzero`；已完成 `prepare-data` 与 CPU 前向，未训练。详见 `reviews/DATA_PROVENANCE.md`。
+- 计划外实现（外部日历、派生拓扑、单位协议、额外数据集、`.gitignore` 修复、已知偏离）汇总在 `reviews/EXTRA_WORK.md`。
 
 ## 5. 建议下一步
 

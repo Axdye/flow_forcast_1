@@ -18,6 +18,7 @@
 | [来源与设计变更](docs/README_PROVENANCE.md) | 前情、旧仓资产、已核验与待核验项 | 负责人 |
 | [任务包](tasks/README.md) | 可直接复制给四个 DeepSeek 会话的任务 | 用户 |
 | [依赖登记](third_party/LOCK.md) | 上游源码固定与许可审计 | Backbone 负责人 |
+| [计划外工作记录](reviews/EXTRA_WORK.md) | 计划没写但已实现的内容、已知偏离与未声称项 | 审查者 / 接手人 |
 
 文档优先级：代码设计中的 MUST 合同 > 实验协议 > 分工任务 > 故事线。发生冲突时提交设计变更，不允许各实现者自行猜测。v1.0 的默认项不能被旧故事线覆盖。
 
@@ -58,9 +59,11 @@ for d in 03 04 07 08; do
 done
 ```
 
-日历不再靠猜：`scripts/build_calendar.py` 从记录在案的起始日期生成 `datetime64` 轴，经 `data.timestamps_file` 注入；文件 hash 进入 prepare signature，改动会触发重建。没有日历文件时 weekday 保持禁用。
+日历不再靠猜：`scripts/build_calendar.py` 支持两种模式——从记录在案的起始日期生成均匀 `datetime64` 轴，或读取数据自带的 tod/dow 通道并施加常量星期相位偏移（保留数据内部缺口）。结果经 `data.timestamps_file` 注入；文件 hash 进入 prepare signature，改动会触发重建。没有日历文件时 weekday 保持禁用。
 
-METR-LA / PEMS-BAY 的时间序列与 DCRNN 邻接已下载核验，但**尚未接入**：缺少 derived topology 标签与 speed 单位协议，配置会拒绝而不是静默当成流量。
+METR-LA / PEMS-BAY 已接入配置：邻接取自 Zenodo 5724362（CC-BY-4.0），使用 `derived_binary_undirected` 拓扑（上游矩阵非对称，不能冒充发布方二值图），单位为 `speed (mph)`，零值按 `official_compat_nonzero` 视为缺失。已完成 `prepare-data` 与 CPU 前向，**尚未训练、没有指标**。
+
+计划外内容（外部日历、派生拓扑、单位协议、额外数据集、`.gitignore` 修复等）与已知偏离统一记录在 [reviews/EXTRA_WORK.md](reviews/EXTRA_WORK.md)。
 
 ## CLI 合同（已实现）
 

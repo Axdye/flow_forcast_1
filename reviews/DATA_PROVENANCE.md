@@ -43,25 +43,31 @@ data/
 
 ## 3. 日历文件
 
-`calendar.npz` 用 `scripts/build_calendar.py` 从**记录在案的起始时间**生成 `datetime64[s]` 时间轴（5 分钟间隔），再经 `data.timestamps_file` 进入 `build_calendar`。没有从流量曲线“猜”星期。
+`calendar.npz` 用 `scripts/build_calendar.py` 生成，再经 `data.timestamps_file` 进入 `build_calendar`。脚本有两种模式：
 
-生成命令示例：
+1. **通道模式**（当前实际使用）：读取 `data.npz` 自带的 tod/dow 通道，`tod` 原样保留（包括 PEMS-BAY 的 1 小时缺口），dow 只施加常量星期相位偏移。
+2. **均匀模式**：从记录在案的起始时间生成 `datetime64[s]` 轴，适合没有时间通道的数据。
+
+通道模式示例：
 
 ```bash
-python scripts/build_calendar.py --start 2018-01-01 --steps 16992 \
-  --note "PEMS04 publisher start (2018-01-01)" --out data/PEMS04/calendar.npz
+python scripts/build_calendar.py --from-data data/PEMS08/data.npz \
+  --start-weekday 4 --note "PEMS08 embedded tod/dow, Friday start" \
+  --out data/PEMS08/calendar.npz
 ```
 
-| 数据集 | 起始 | 生成文件覆盖到 | 周内校验（周末/工作日平均流量） |
-|---|---|---|---|
-| PEMS03 | 2018-09-01 | 2018-11-30 23:55 | 0.878 |
-| PEMS04 | 2018-01-01 | 2018-02-28 23:55 | 0.876 |
-| PEMS07 | 2017-05-01 | 2017-08-06 23:55 | 0.928 |
-| PEMS08 | 2016-07-01 | 2016-08-31 23:55 | 0.915 |
+| 数据集 | 起始 | 起始星期 | dow 通道含义 | 周末/工作日平均原始值 |
+|---|---|---|---|---|
+| PEMS03 | 2018-09-01 | 周六 | `day_index % 7` 相位 | 0.878（流量） |
+| PEMS04 | 2018-01-01 | 周一 | 相位 | 0.876（流量） |
+| PEMS07 | 2017-05-01 | 周一 | 相位 | 0.928（流量） |
+| PEMS08 | 2016-07-01 | 周五 | 相位 | 0.915（流量） |
+| METR-LA | 2012-03-01 | 周四 | 真实星期 | 1.051（速度） |
+| PEMS-BAY | 2017-01-01 | 周日 | 真实星期 | 1.064（速度） |
 
-四个数据集的周末平均流量都明显低于工作日，说明 weekday 相位与起始日期一致。这是**一致性检查**，不是独立时间戳证明；若后续拿到发布方原始时间戳，应替换并重跑 `prepare-data`（签名会变，缓存自动失效）。
+PEMS 四件套的 dow 通道满足 `dow == day_index // 288 % 7`，只是相位；METR-LA / PEMS-BAY 的通道本身已是真实星期，偏移为 0。周末/工作日比值与数据形态一致（流量周末更低、速度周末更高），但这是**一致性检查**，不是独立时间戳证明；若后续拿到发布方原始时间戳，应替换并重跑 `prepare-data`（签名会变，缓存自动失效）。
 
-## 4. METR-LA / PEMS-BAY（已下载，尚未接入训练协议）
+## 4. METR-LA / PEMS-BAY（已接入配置，未训练）
 
 这是本机原先缺失的部分：只有 `Flow-RL 2/STAEformer/data/{METRLA,PEMSBAY}/data.npz` 时间序列，没有任何路网。
 
@@ -96,24 +102,40 @@ python scripts/build_calendar.py --start 2018-01-01 --steps 16992 \
 | METR-LA | 207 | 1722 | 1313 | 1 |
 | PEMS-BAY | 325 | 2694 | 2079 | 6 |
 
-注意：上游 `gen_adj_mx.py` 的对称化一行被注释掉，所以发布的矩阵本身是非对称的；本仓按图合同做双向并集，属于**派生二值拓扑**，不是发布方原始二值图。真正启用时必须用独立的 `graph.topology` 标签（例如 `derived_binary_undirected`）写入 `graph_hash`，不能冒充 `published_binary_undirected`。
+注意：上游 `gen_adj_mx.py` 的对称化一行被注释掉，所以发布的矩阵本身是非对称的；本仓按图合同做双向并集，属于**派生二值拓扑**，不是发布方原始二值图。配置使用独立的 `graph.topology: derived_binary_undirected` 标签写入 `graph_hash`，不能冒充 `published_binary_undirected`。
 
-## 5. 尚未完成（不要当成已支持）
+### 单位与缺失口径
 
-1. `graph.topology` 还没有 `derived_binary_undirected` 枚举；METR-LA / PEMS-BAY 的 `adj_edges.npz` 已生成但无法通过配置校验。
-2. METR-LA / PEMS-BAY 第 0 通道是**速度 mph**，不是流量。需要新增 `data.unit` / target 语义，并让评测产物 `metric_units` 跟着变；当前 `METRIC_UNITS` 是全局常量，直接跑会把速度标成流量。
-3. 没有为这两个数据集创建实验配置，也没有跑过 `prepare-data`、前向或训练。
-4. PEMS03/04/07 只做了 `prepare-data` 与 CPU 前向 smoke，没有训练。
+- 第 0 通道是**速度 mph**，不是流量。配置写 `data.unit: "speed (mph)"`，评测产物 `metric_units` 的 MAE/RMSE/regret 跟随该单位。
+- 零值按 DCRNN 惯例视为缺失：`missing_policy: official_compat_nonzero`、`zeros_are_valid: false`。METR-LA 约 8.11% 为零，PEMS-BAY 为 0%。
+
+### 当前状态
+
+已生成 `configs/experiments/metrla.yaml`、`pemsbay.yaml`，并完成 `prepare-data` 与两样本 CPU 前向：
+
+| 数据集 | shape | 图边数 | train/val/test 窗口 | graph_hash 前缀 | 单位 |
+|---|---|---|---|---|---|
+| METRLA | (34272, 207) | 1313 | 20540 / 6843 / 6844 | `378d072270c1` | speed (mph) |
+| PEMSBAY | (52116, 325) | 2079 | 31246 / 10412 / 10413 | `d7e851440748` | speed (mph) |
+
+**没有训练、没有评测指标、没有 GPU 结果。**
+
+## 5. 仍未完成（不要当成已支持）
+
+1. METR-LA / PEMS-BAY 只做了数据准备与 CPU 前向，没有训练或论文指标。
+2. PEMS03/04/07/08 只做了 `prepare-data` 与 PEMS08 CPU 前向 smoke，没有训练。
+3. 日历是数据自带 tod/dow + 有记录的起始星期，不是发布方原始时间戳。
+4. 真实 GPU smoke、依赖 lock、CI 仍未提供。
 
 ## 6. 复现命令
 
 ```bash
-# 重新生成日历（已生成的文件可覆盖）
-python scripts/build_calendar.py --start <YYYY-MM-DD> --steps <M> \
-  --note "<source note>" --out data/<NAME>/calendar.npz
+# 重新生成日历年（通道模式；均匀模式用 --start/--steps）
+python scripts/build_calendar.py --from-data data/<NAME>/data.npz \
+  --start-weekday <0..6> --note "<source note>" --out data/<NAME>/calendar.npz
 
-# 准备 PEMS 四件套
-for d in 03 04 07 08; do
-  PYTHONPATH=src python -m sbona.cli prepare-data --config configs/experiments/pems$d.yaml
+# 准备六个数据集
+for d in pems03 pems04 pems07 pems08 metrla pemsbay; do
+  PYTHONPATH=src python -m sbona.cli prepare-data --config configs/experiments/$d.yaml
 done
 ```
