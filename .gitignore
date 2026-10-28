@@ -9,13 +9,15 @@ venv/
 .env
 .env.*
 !.env.example
-data/
-datasets/
-outputs/
-checkpoints/
-logs/
-wandb/
-swanlog/
+# Artifact directories are anchored to the repository root so source packages
+# such as src/sbona/data/ are never ignored by a bare ``data/`` pattern.
+/data/
+/datasets/
+/outputs/
+/checkpoints/
+/logs/
+/wandb/
+/swanlog/
 *.pt
 *.pth
 *.ckpt

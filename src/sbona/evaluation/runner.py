@@ -42,16 +42,28 @@ from sbona.evaluation.statistics import paired_moving_block_bootstrap
 from sbona.objectives.oracle import OracleSettings, build_oracle
 from sbona.training.trainer import move_input, move_target
 
-METRIC_UNITS = {
-    "mae": "flow per sampling interval (raw publisher units)",
-    "rmse": "flow per sampling interval (raw publisher units)",
-    "mape": "percent",
-    "nvr": "fraction of valid elements",
-    "euvr": "fraction of valid elements",
-    "regret": "flow per sampling interval (raw publisher units)",
-    "retention": "dimensionless",
-    "distance": "raw flow units or z units as named",
-}
+DEFAULT_DATA_UNIT = "flow per sampling interval (raw publisher units)"
+
+
+def metric_units(unit: str = DEFAULT_DATA_UNIT) -> dict[str, str]:
+    """Return metric unit labels for a dataset unit.
+
+    The raw-unit label must come from ``data.unit`` (flow, speed, ...) so a
+    speed dataset is never reported as flow.  MAPE and masks stay unit-free.
+    """
+    return {
+        "mae": unit,
+        "rmse": unit,
+        "mape": "percent",
+        "nvr": "fraction of valid elements",
+        "euvr": "fraction of valid elements",
+        "regret": unit,
+        "retention": "dimensionless",
+        "distance": "raw data units or z units as named",
+    }
+
+
+METRIC_UNITS = metric_units()
 
 
 @dataclass
@@ -225,7 +237,7 @@ def _metric_document(
         "schema_version": METRICS_SCHEMA_VERSION,
         "protocol_id": cfg.protocol_id,
         "method_id": cfg.method_id,
-        "metric_units": METRIC_UNITS,
+        "metric_units": metric_units(cfg.data.unit),
         "counts": counts,
         "methods": methods,
     }
@@ -654,5 +666,7 @@ __all__ = [
     "RegimeAccumulator",
     "evaluate_base_split",
     "evaluate_adapter_split",
+    "DEFAULT_DATA_UNIT",
+    "metric_units",
     "METRIC_UNITS",
 ]

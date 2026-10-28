@@ -1,4 +1,4 @@
-# PEMS08 shared data/graph configuration.
+# Dataset configuration (shared defaults; paths resolved from the data root).
 # Paths are relative to the data root (CLI > SBONA_DATA_ROOT > paths.data_root > data).
 schema_version: 1
 protocol_id: flow_12x12_v1

@@ -71,6 +71,7 @@ class DataConfig:
     envelope_quantile: float = 0.995
     envelope_min_count: int = 1000
     mape_min_abs_target: float = 1.0
+    unit: str = "flow per sampling interval (raw publisher units)"
     data_file: str | None = None
     graph_file: str | None = None
     node_ids_file: str | None = None
@@ -97,6 +98,7 @@ class DataConfig:
         "envelope_quantile",
         "envelope_min_count",
         "mape_min_abs_target",
+        "unit",
         "data_file",
         "graph_file",
         "node_ids_file",
@@ -134,6 +136,11 @@ class DataConfig:
             envelope_min_count=_as_int(data.get("envelope_min_count", 1000), "data.envelope_min_count"),
             mape_min_abs_target=_as_float(
                 data.get("mape_min_abs_target", 1.0), "data.mape_min_abs_target"
+            ),
+            unit=str(
+                data.get(
+                    "unit", "flow per sampling interval (raw publisher units)"
+                )
             ),
             data_file=data.get("data_file"),
             graph_file=data.get("graph_file"),
@@ -184,6 +191,7 @@ class DataConfig:
         _require(0.5 < self.envelope_quantile < 1.0, "data.envelope_quantile must be in (0.5, 1)")
         _require(self.envelope_min_count >= 1, "data.envelope_min_count must be >= 1")
         _require(self.mape_min_abs_target >= 0, "data.mape_min_abs_target must be >= 0")
+        _require(self.unit.strip() != "", "data.unit must be non-empty")
         _require(self.flow_channel >= 0, "data.flow_channel must be >= 0")
         _require(
             0.0 <= self.synthetic_missing_fraction < 1.0,
@@ -226,7 +234,8 @@ class GraphConfig:
 
     def validate(self) -> None:
         _require(
-            self.topology in ("published_binary_undirected", "identity"),
+            self.topology
+            in ("published_binary_undirected", "derived_binary_undirected", "identity"),
             f"unknown graph.topology {self.topology!r}",
         )
         _require(

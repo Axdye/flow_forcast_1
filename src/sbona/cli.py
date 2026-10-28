@@ -44,9 +44,9 @@ from sbona.evaluation.artifacts import (
 )
 from sbona.evaluation.profiler import profile_callable, profile_model
 from sbona.evaluation.runner import (
-    METRIC_UNITS,
     evaluate_adapter_split,
     evaluate_base_split,
+    metric_units,
 )
 from sbona.training.checkpoint import (
     load_checkpoint,
@@ -331,14 +331,12 @@ def _find_run(
 # ---------------------------------------------------------------------------
 
 
-def _units_for(metric: str) -> str:
-    if "mape" in metric:
-        return "percent"
-    if metric.endswith("nvr") or metric.endswith("euvr"):
-        return "fraction of valid elements"
-    if "retention" in metric:
-        return "dimensionless"
-    return "flow per sampling interval (raw publisher units)"
+def _units_for(metric: str, data_unit: str) -> str:
+    units = metric_units(data_unit)
+    for key, label in units.items():
+        if key in metric:
+            return label
+    return data_unit
 
 
 def _read_experiment_rows(path: Path) -> list[dict[str, str]]:
@@ -393,7 +391,9 @@ def _append_experiment_rows(
                 "data_hash": str(data_hash),
                 "metric": str(row["metric"]),
                 "value": repr(numeric),
-                "units": str(row.get("units") or _units_for(str(row["metric"]))),
+                "units": str(
+                    row.get("units") or _units_for(str(row["metric"]), cfg.data.unit)
+                ),
                 "deployable": "true" if bool(row.get("deployable", False)) else "false",
                 "artifact": str(artifact),
             }
@@ -425,7 +425,7 @@ def _metric_document(
         "protocol_id": cfg.protocol_id,
         "method_id": cfg.method_id,
         "stage": stage,
-        "metric_units": METRIC_UNITS,
+        "metric_units": metric_units(cfg.data.unit),
         "counts": counts,
         "best_metric": best_metric,
         "epochs_run": epochs_run,
@@ -903,7 +903,7 @@ def cmd_probe_route(args: argparse.Namespace) -> int:
         "protocol_id": cfg.protocol_id,
         "method_id": cfg.method_id,
         "stage": "P",
-        "metric_units": METRIC_UNITS,
+        "metric_units": metric_units(cfg.data.unit),
         "counts": {
             "windows": probe.get("windows", {}),
             "num_candidates": cfg.adapter.num_candidates,
