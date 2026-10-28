@@ -16,6 +16,56 @@ data/
 
 `data_root` 的解析优先级仍是 CLI `--data-root` > `SBONA_DATA_ROOT` > `paths.data_root` > 默认 `data`。
 
+## 1.1 上游原始文件与机器复现链
+
+`data/` 里的内容分两类：**上游原样文件**和**本仓转换/生成的派生文件**。只有前者需要从网络获取，后者必须由脚本重建。`provenance/raw_sources.json` 只登记上游文件，并逐个校验 sha256 与字节数。
+
+```bash
+# 1) 下载并校验上游原始文件（约 156 MB）
+python scripts/fetch_data.py --all --dest raw
+
+# 2) 归一化成 prepare-data 期望的布局
+python scripts/import_raw.py --all --raw-dir raw --data-root data
+
+# 3) 构建 prepared 产物
+for d in pems03 pems04 pems07 pems08 metrla pemsbay; do
+  PYTHONPATH=src python -m sbona.cli prepare-data --config configs/experiments/$d.yaml
+done
+```
+
+| 数据集 | 序列（上游文件） | 图（上游文件） | node ids |
+|---|---|---|---|
+| PEMS03 | STAEformer `data/PEMS03/data.npz` | ASTGNN `PEMS03.csv` | ASTGNN `PEMS03.txt` |
+| PEMS04 | STAEformer `data/PEMS04/data.npz` | ASTGNN `PEMS04.csv` | 列索引 |
+| PEMS07 | STAEformer `data/PEMS07/data.npz` | ASTGNN `PEMS07.csv` | 列索引 |
+| PEMS08 | STAEformer `data/PEMS08/data.npz` | ASTGNN `PEMS08.csv` | 列索引 |
+| METR-LA | STAEformer `data/METRLA/data.npz` | Zenodo 5724362 `adj_mx_METR-LA.pkl` | 列索引 |
+| PEMS-BAY | STAEformer `data/PEMSBAY/data.npz` | Zenodo 5724362 `adj_mx_PEMS-BAY.pkl` | 列索引 |
+
+上游文件与本地审计副本的 sha256 **逐字节相同**（不是“数值接近”）：六个 `data.npz`、四个 PEMS `*.csv`、`PEMS03.txt`、两个 Zenodo `adj_mx*.pkl`。
+
+### 可执行的校验
+
+`tests/data/golden_prepared.json` 记录了审计副本经 `prepare-data` 后的
+`data_hash / valid_hash / graph_hash / split_hash / scaler_hash / node_order_hash / 窗口数 / calendar_hash`。
+`tests/integration/test_raw_import_golden.py` 从上游文件重新导入并 `prepare`，逐项断言与 golden 相等：
+
+```bash
+SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
+```
+
+这不只是“能跑”：只要上游文件被替换、节点顺序被改、图被改、切分被改或标定统计被改，对应 hash 立刻不等。
+
+`import_raw.py` 还会在 `data/<NAME>/RAW_SOURCE.json` 记录本次使用的上游文件名、sha256、转换规则和输出文件 hash。`SOURCE.json` 保留为审计摘要，两者不互相替代。
+
+### 派生文件（不可下载，必须由脚本生成）
+
+| 文件 | 生成方式 |
+|---|---|
+| `calendar.npz` | `scripts/import_raw.py`（优先数据自带 tod/dow，其次嵌入时间戳，最后文档起始日期均匀采样）；等价于 `scripts/build_calendar.py` |
+| `adj_edges.npz` | `scripts/import_raw.py` 从 `adj_mx*.pkl` 二值化：`adj>0` → 去对角 → 双向并集 → 保留 `i<j` |
+| `SOURCE.json` | 人工审计摘要，记录起始日期、节点数、边数与上游 hash |
+
 ## 2. PEMS 四件套
 
 | 数据集 | 序列 shape | 节点 | 时间步 | 起始（已核验） | 图边数（去自环/去重） |
@@ -25,10 +75,9 @@ data/
 | PEMS07 | (28224, 883, 3) | 883 | 98 天 | 2017-05-01（周一） | 866 |
 | PEMS08 | (17856, 170, 3) | 170 | 62 天 | 2016-07-01（周五） | 274 |
 
-- 序列文件源自 `Flow-RL 2/STAEformer/data/<NAME>/data.npz`（唯一 key `data`，第 0 通道为 flow）。
-- 图文件源自 `Flow-RL 2/DFDGCN/datasets/raw_data/<NAME>/<NAME>.csv`。PEMS03 的 CSV 使用真实传感器 ID，需配合 `PEMS03.txt`（358 个 ID）映射到列序；已实测该映射重建的邻接与 `adj_PEMS03.pkl` 完全一致（1093 非零 = 2×546 + 1 自环）。
-- PEMS04/07/08 的 CSV 端点已是列索引，无需映射。
-- 上游版权：PeMS 数据由 Caltrans 发布，经 BasicTS/DFDGCN 镜像获得。镜像仓库未提供再许可声明，本仓只做研究用途引用，不声称拥有数据权利。
+- 序列文件的原发布位置是 STAEformer 仓库 `data/<NAME>/data.npz`（唯一 key `data`，第 0 通道为 flow；PEMS 另含 tod/dow 通道）。本地审计副本与公开文件 sha256 相同。
+- 图文件的原发布位置是 ASTGNN 仓库 `data/<NAME>/<NAME>.csv`，本地副本与公开文件 sha256 相同。PEMS03 的 CSV 使用真实传感器 ID，需配合 `PEMS03.txt`（358 个 ID）映射到列序；已实测该映射重建的邻接与 `adj_PEMS03.pkl` 完全一致（1093 非零 = 2×546 + 1 自环）。
+- 上游版权：PeMS 数据由 Caltrans 发布，经 STAEformer / ASTGNN 镜像获得。镜像仓库未提供再许可声明，本仓只做研究用途引用，不声称拥有数据权利。
 
 ### 文件 sha256（前 16 位）
 
@@ -124,18 +173,33 @@ PEMS 四件套的 dow 通道满足 `dow == day_index // 288 % 7`，只是相位�
 
 1. METR-LA / PEMS-BAY 只做了数据准备与 CPU 前向，没有训练或论文指标。
 2. PEMS03/04/07/08 只做了 `prepare-data` 与 PEMS08 CPU 前向 smoke，没有训练。
-3. 日历是数据自带 tod/dow + 有记录的起始星期，不是发布方原始时间戳。
+3. 日历是数据自带 tod/dow + 有记录的起始星期，不是发布方原始时间戳。上游 `index.npz` 只有窗口索引，没有 datetime。
 4. 真实 GPU smoke、依赖 lock、CI 仍未提供。
+5. `fetch_data.py` 的上游 URL 指向会移动的默认分支，靠 sha256 拦截漂移；没有为每个文件固定 git commit。
 
 ## 6. 复现命令
 
+从零开始（干净机器，只需要网络）：
+
 ```bash
-# 重新生成日历年（通道模式；均匀模式用 --start/--steps）
-python scripts/build_calendar.py --from-data data/<NAME>/data.npz \
-  --start-weekday <0..6> --note "<source note>" --out data/<NAME>/calendar.npz
+# 下载 + 校验上游原始文件
+python scripts/fetch_data.py --all --dest raw
+
+# 归一化布局（写入 data/<NAME>/，并记录 RAW_SOURCE.json）
+python scripts/import_raw.py --all --raw-dir raw --data-root data
 
 # 准备六个数据集
 for d in pems03 pems04 pems07 pems08 metrla pemsbay; do
   PYTHONPATH=src python -m sbona.cli prepare-data --config configs/experiments/$d.yaml
 done
+
+# 与审计副本的 hash 对账
+SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
+```
+
+只重建日历（`import_raw.py` 已包含该步骤，单独使用时）：
+
+```bash
+python scripts/build_calendar.py --from-data data/<NAME>/data.npz \
+  --start-weekday <0..6> --note "<source note>" --out data/<NAME>/calendar.npz
 ```

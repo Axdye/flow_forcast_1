@@ -11,10 +11,12 @@
 | B 模型实现 | v1 已实现（STAEformer 主线） | `src/sbona/backbones/staeformer.py`、`models/`；`tests/unit/test_actions_decoder.py` |
 | C 训练实现 | v1 已实现（A/B/C/D + probe） | `src/sbona/training/`；`tests/integration/test_synthetic_pipeline.py`、`test_cli_synthetic.py` |
 | D 评测实现 | v1 已实现（metrics/oracle/regimes/artifacts/profile） | `src/sbona/evaluation/`；`tests/unit/test_metrics.py`、`test_objectives.py`、`test_regimes.py`、`test_artifacts.py` |
-| CPU 单测/集成测试 | 已执行：65 passed, 1 skipped | `python -m pytest -q`；环境 Python 3.11.11、torch 2.2.2、numpy 1.26.4、scipy 1.15.2 |
+| CPU 单测/集成测试 | 已执行：77 passed, 1 skipped（不含 opt-in 数据测试） | `python -m pytest -q`；环境 Python 3.11.11、torch 2.2.2、numpy 1.26.4、scipy 1.15.2 |
 | 静态检查 | 已执行：ruff 无错误 | `ruff check src tests scripts` |
 | GPU smoke | 未执行 | `tests/gpu/test_gpu_smoke.py` 因无 CUDA 跳过；不声称 GPU 结果 |
 | 真实数据审计 | 部分执行，未训练 | PEMS03/04/07/08 与 METR-LA/PEMS-BAY 均完成 `prepare-data`（含日历与 day-of-week）；PEMS08 与 METR-LA 各 2 样本 CPU forward 通过；见 `reviews/DATA_PROVENANCE.md` |
+| 上游数据可复现 | 已执行：13 个上游文件真实下载并逐字节校验 | `scripts/fetch_data.py --all` + `provenance/raw_sources.json` |
+| 原始文件 → prepared 对账 | 已执行：7 passed | `SBONA_RAW_DIR=raw pytest tests/integration/test_raw_import_golden.py`；`tests/data/golden_prepared.json` |
 | 真实数据训练/评测 | 未执行 | 无任何真实数据集 checkpoint 或 MAE 结果 |
 | 可路由性与科学有效性 | 未验证 | 尚无真实实验；synthetic 数值不是科学证据 |
 | 外部 backbone runtime | 未验证 | STID / Graph WaveNet / AGCRN 仍为 pending |
@@ -27,7 +29,11 @@
 ```bash
 # 临时 Python 3.11 环境（torch 2.2.2，CPU）
 python -m pytest -q
-# 65 passed, 1 skipped (CUDA unavailable)
+# 77 passed, 1 skipped (CUDA unavailable)
+
+# opt-in：真实上游文件 → prepared 的 golden hash 对账
+SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
+# 7 passed
 
 ruff check src tests scripts
 # All checks passed

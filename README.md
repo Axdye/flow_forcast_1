@@ -51,15 +51,25 @@
 
 ## 数据与日历
 
-`data/` 被 `.gitignore` 排除，需按 `reviews/DATA_PROVENANCE.md` 放置原始文件。PEMS 四件套已提供同构配置：
+`data/` 与 `raw/` 都被 `.gitignore` 排除。干净机器只需网络，无需手工拷贝：
 
 ```bash
-for d in 03 04 07 08; do
-  python -m sbona.cli prepare-data --config configs/experiments/pems$d.yaml
+python scripts/fetch_data.py --all --dest raw          # 下载并按 sha256 校验上游原始文件
+python scripts/import_raw.py --all --raw-dir raw --data-root data
+for d in pems03 pems04 pems07 pems08 metrla pemsbay; do
+  python -m sbona.cli prepare-data --config configs/experiments/$d.yaml
 done
 ```
 
-日历不再靠猜：`scripts/build_calendar.py` 支持两种模式——从记录在案的起始日期生成均匀 `datetime64` 轴，或读取数据自带的 tod/dow 通道并施加常量星期相位偏移（保留数据内部缺口）。结果经 `data.timestamps_file` 注入；文件 hash 进入 prepare signature，改动会触发重建。没有日历文件时 weekday 保持禁用。
+`provenance/raw_sources.json` 登记每个上游文件的 URL、字节数与 sha256；`import_raw.py` 在 `data/<NAME>/RAW_SOURCE.json` 留下本次导入的 hash 与转换规则。上游文件与本地审计副本**逐字节相同**，因此可以逐项对账：
+
+```bash
+SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
+```
+
+该测试断言 `data_hash / valid_hash / graph_hash / split_hash / scaler_hash / node_order_hash / 窗口数 / calendar_hash` 与 `tests/data/golden_prepared.json` 完全一致。换文件、换节点顺序、改图或改切分都会立刻失败。
+
+日历不再靠猜：`scripts/import_raw.py`（等价于 `scripts/build_calendar.py`）按“嵌入时间戳 > 数据自带 tod/dow > 文档起始日期均匀采样”的优先级构建 `[M, 2]` 表，保留数据内部缺口。结果经 `data.timestamps_file` 注入；文件 hash 进入 prepare signature，改动会触发重建。没有日历文件时 weekday 保持禁用。
 
 METR-LA / PEMS-BAY 已接入配置：邻接取自 Zenodo 5724362（CC-BY-4.0），使用 `derived_binary_undirected` 拓扑（上游矩阵非对称，不能冒充发布方二值图），单位为 `speed (mph)`，零值按 `official_compat_nonzero` 视为缺失。已完成 `prepare-data` 与 CPU 前向，**尚未训练、没有指标**。
 

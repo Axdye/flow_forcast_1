@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "generated": "2026-10-28",
+  "note": "Upstream raw files only. Every sha256 below was computed on a file downloaded from the URL listed here and compared byte-for-byte with the copy audited in reviews/DATA_PROVENANCE.md. Conversion into the prepare-data layout is scripts/import_raw.py; this manifest verifies bytes, not semantics.",
+  "datasets": {
+    "PEMS03": {
+      "license": "Caltrans PeMS; mirror terms not re-licensed here",
+      "files": [
+        {
+          "name": "data.npz",
+          "role": "series",
+          "source": "STAEformer data/PEMS03/data.npz",
+          "urls": [
+            "https://raw.githubusercontent.com/XDZhelheim/STAEformer/main/data/PEMS03/data.npz",
+            "archive:https://codeload.github.com/XDZhelheim/STAEformer/tar.gz/refs/heads/main#STAEformer-main/data/PEMS03/data.npz"
+          ],
+          "sha256": "9a47e9044ead41593c2bbbae1d20150c3da1bcbd107d8dec9c9797756d0bcbdd",
+          "size": 20610714
+        },
+        {
+          "name": "PEMS03.csv",
+          "role": "graph",
+          "source": "ASTGNN data/PEMS03/PEMS03.csv",
+          "urls": [
+            "https://raw.githubusercontent.com/guoshnBJTU/ASTGNN/main/data/PEMS03/PEMS03.csv",
+            "https://cdn.jsdelivr.net/gh/guoshnBJTU/ASTGNN@main/data/PEMS03/PEMS03.csv",
+            "archive:https://codeload.github.com/guoshnBJTU/ASTGNN/tar.gz/refs/heads/main#ASTGNN-main/data/PEMS03/PEMS03.csv"
+          ],
+          "sha256": "b978bc1fee8172ac0bb02e6478f0376b68d172ee88c0c3121c60241e42c89fc6",
+          "size": 11994
+        },
+        {
+          "name": "PEMS03.txt",
+          "role": "node_ids",
+          "source": "ASTGNN data/PEMS03/PEMS03.txt",
+          "urls": [
+            "https://raw.githubusercontent.com/guoshnBJTU/ASTGNN/main/data/PEMS03/PEMS03.txt",
+            "https://cdn.jsdelivr.net/gh/guoshnBJTU/ASTGNN@main/data/PEMS03/PEMS03.txt",
+            "archive:https://codeload.github.com/guoshnBJTU/ASTGNN/tar.gz/refs/heads/main#ASTGNN-main/data/PEMS03/PEMS03.txt"
+          ],
+          "sha256": "553bd79618c1e7eb195b467b5a3114d44c5adb43f7ab8b19789fd9dfaa43c439",
+          "size": 2862
+        }
+      ]
+    },
+    "PEMS04": {
+      "license": "Caltrans PeMS; mirror terms not re-licensed here",
+      "files": [
+        {
+          "name": "data.npz",
+          "role": "series",
+          "source": "STAEformer data/PEMS04/data.npz",
+          "urls": [
+            "https://raw.githubusercontent.com/XDZhelheim/STAEformer/main/data/PEMS04/data.npz",
+            "https://cdn.jsdelivr.net/gh/XDZhelheim/STAEformer@main/data/PEMS04/data.npz",
+            "archive:https://codeload.github.com/XDZhelheim/STAEformer/tar.gz/refs/heads/main#STAEformer-main/data/PEMS04/data.npz"
+          ],
+          "sha256": "6e46317aa8c87ac307fc5df9eb2a01e6d87497fbc7e881c96b21babbf171647e",
+          "size": 11871498
+        },
+        {
+          "name": "PEMS04.csv",
+          "role": "graph",
+          "source": "ASTGNN data/PEMS04/PEMS04.csv",
+          "urls": [
+            "https://raw.githubusercontent.com/guoshnBJTU/ASTGNN/main/data/PEMS04/PEMS04.csv",
+            "https://cdn.jsdelivr.net/gh/guoshnBJTU/ASTGNN@main/data/PEMS04/PEMS04.csv",
+            "archive:https://codeload.github.com/guoshnBJTU/ASTGNN/tar.gz/refs/heads/main#ASTGNN-main/data/PEMS04/PEMS04.csv"
+          ],
+          "sha256": "68ffaa80447eb34428a9999dc28363c61406ec0fd714686d0582d2386ac6f5f7",
+          "size": 4852
+        }
+      ]
+    },
+    "PEMS07": {
+      "license": "Caltrans PeMS; mirror terms not re-licensed here",
+      "files": [
+        {
+          "name": "data.npz",
+          "role": "series",
+          "source": "STAEformer data/PEMS07/data.npz",
+          "urls": [
+            "https://raw.githubusercontent.com/XDZhelheim/STAEformer/main/data/PEMS07/data.npz",
+            "archive:https://codeload.github.com/XDZhelheim/STAEformer/tar.gz/refs/heads/main#STAEformer-main/data/PEMS07/data.npz"
+          ],
+          "sha256": "f0523989cc048d98bb1cf6d16ce57bb78325dd58bafc4528182558f97235b1cf",
+          "size": 54782708
+        },
+        {
+          "name": "PEMS07.csv",
+          "role": "graph",
+          "source": "ASTGNN data/PEMS07/PEMS07.csv",
+          "urls": [
+            "https://raw.githubusercontent.com/guoshnBJTU/ASTGNN/main/data/PEMS07/PEMS07.csv",
+            "https://cdn.jsdelivr.net/gh/guoshnBJTU/ASTGNN@main/data/PEMS07/PEMS07.csv",
+            "archive:https://codeload.github.com/guoshnBJTU/ASTGNN/tar.gz/refs/heads/main#ASTGNN-main/data/PEMS07/PEMS07.csv"
+          ],
+          "sha256": "f7d127ebf976f1e2d93dc7d7275cef6d8c4c1828c7c8bfbaf3ee1254491314f1",
+          "size": 15016
+        }
+      ]
+    },
+    "PEMS08": {
+      "license": "Caltrans PeMS; mirror terms not re-licensed here",
+      "files": [
+        {
+          "name": "data.npz",
+          "role": "series",
+          "source": "STAEformer data/PEMS08/data.npz",
+          "urls": [
+            "https://raw.githubusercontent.com/XDZhelheim/STAEformer/main/data/PEMS08/data.npz",
+            "https://cdn.jsdelivr.net/gh/XDZhelheim/STAEformer@main/data/PEMS08/data.npz",
+            "archive:https://codeload.github.com/XDZhelheim/STAEformer/tar.gz/refs/heads/main#STAEformer-main/data/PEMS08/data.npz"
+          ],
+          "sha256": "709383c68dd591f52a84117bb7c54d5c7fb55acd05155c7ccaef83a913a77cd0",
+          "size": 6991207
+        },
+        {
+          "name": "PEMS08.csv",
+          "role": "graph",
+          "source": "ASTGNN data/PEMS08/PEMS08.csv",
+          "urls": [
+            "https://raw.githubusercontent.com/guoshnBJTU/ASTGNN/main/data/PEMS08/PEMS08.csv",
+            "https://cdn.jsdelivr.net/gh/guoshnBJTU/ASTGNN@main/data/PEMS08/PEMS08.csv",
+            "archive:https://codeload.github.com/guoshnBJTU/ASTGNN/tar.gz/refs/heads/main#ASTGNN-main/data/PEMS08/PEMS08.csv"
+          ],
+          "sha256": "859d68e7583ed4e6016588eaaca494d3ece286dae361614c5c1833017f87eaa7",
+          "size": 4032
+        }
+      ]
+    },
+    "METRLA": {
+      "license": "DCRNN / Zenodo 10.5281/zenodo.5724362, CC-BY-4.0",
+      "files": [
+        {
+          "name": "data.npz",
+          "role": "series",
+          "source": "STAEformer data/METRLA/data.npz",
+          "urls": [
+            "https://raw.githubusercontent.com/XDZhelheim/STAEformer/main/data/METRLA/data.npz",
+            "https://cdn.jsdelivr.net/gh/XDZhelheim/STAEformer@main/data/METRLA/data.npz",
+            "archive:https://codeload.github.com/XDZhelheim/STAEformer/tar.gz/refs/heads/main#STAEformer-main/data/METRLA/data.npz"
+          ],
+          "sha256": "68b6daf68ac21e854b5c36f353b876e181d2c1ad2364213ef531f30f1c0ca13f",
+          "size": 17299152
+        },
+        {
+          "name": "adj_mx_METR-LA.pkl",
+          "role": "graph",
+          "source": "Zenodo record 5724362 (byte-identical to DCRNN data/sensor_graph/adj_mx.pkl)",
+          "urls": [
+            "https://zenodo.org/api/records/5724362/files/adj_mx_METR-LA.pkl/content",
+            "https://raw.githubusercontent.com/liyaguang/DCRNN/master/data/sensor_graph/adj_mx.pkl"
+          ],
+          "sha256": "a35687c6e15aa228dc45027b0ed2a0ea0f4ec78f573deb992c595092d12f61b3",
+          "size": 680459
+        }
+      ]
+    },
+    "PEMSBAY": {
+      "license": "DCRNN / Zenodo 10.5281/zenodo.5724362, CC-BY-4.0",
+      "files": [
+        {
+          "name": "data.npz",
+          "role": "series",
+          "source": "STAEformer data/PEMSBAY/data.npz",
+          "urls": [
+            "https://raw.githubusercontent.com/XDZhelheim/STAEformer/main/data/PEMSBAY/data.npz",
+            "archive:https://codeload.github.com/XDZhelheim/STAEformer/tar.gz/refs/heads/main#STAEformer-main/data/PEMSBAY/data.npz"
+          ],
+          "sha256": "dedc5b8d18b3e5b406a380bd8c656b22f75f9adcc21f91dc7bbef189d6357c46",
+          "size": 42128900
+        },
+        {
+          "name": "adj_mx_PEMS-BAY.pkl",
+          "role": "graph",
+          "source": "Zenodo record 5724362 (byte-identical to DCRNN data/sensor_graph/adj_mx_bay.pkl)",
+          "urls": [
+            "https://zenodo.org/api/records/5724362/files/adj_mx_PEMS-BAY.pkl/content",
+            "https://raw.githubusercontent.com/liyaguang/DCRNN/master/data/sensor_graph/adj_mx_bay.pkl"
+          ],
+          "sha256": "116275f5704d0d492018e14c047f7ae5004385b450aa907f88424055a4a97370",
+          "size": 1681480
+        }
+      ]
+    }
+  }
+}

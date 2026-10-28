@@ -25,8 +25,12 @@
 | X6 | `derived_binary_undirected` 拓扑标签 | 只允许 published 二值图 | `src/sbona/data/graph.py`、`config.py` | 单测：同扩散、不同 `graph_hash` |
 | X7 | `data.unit` 与 `metric_units(unit)` | 只要求 manifest 记单位 | `config.py`、`evaluation/runner.py`、`cli.py` | 单测；prepared manifest 与 `metric_units` 均为 mph |
 | X8 | `data/<NAME>/SOURCE.json` 与 `reviews/DATA_PROVENANCE.md` | 只要求记录来源 | `data/*/SOURCE.json`、`reviews/DATA_PROVENANCE.md` | 文件 hash 与上游下载比对 |
-| X9 | 额外测试 `test_calendar.py`、`test_units_topology.py` | 未规定 | `tests/unit/` | 当前 65 passed, 1 skipped |
+| X9 | 额外测试 `test_calendar.py`、`test_units_topology.py` | 未规定 | `tests/unit/` | 当前 77 passed, 1 skipped |
+| X10 | `scripts/fetch_data.py` + `provenance/raw_sources.json` | 只要求“记录来源”，未要求可下载/可校验 | `scripts/fetch_data.py`、`provenance/raw_sources.json` | 全量下载六个数据集并逐字节校验 |
+| X11 | `scripts/import_raw.py`（上游格式 → prepare 布局） | 未规定 | `scripts/import_raw.py` | 六数据集导入并与审计 hash 对齐 |
+| X12 | `tests/data/golden_prepared.json` + `test_raw_import_golden.py` | 未规定 | `tests/data/`、`tests/integration/` | 7 passed（真实上游文件） |
 | F1 | `.gitignore` 误伤 `src/sbona/data/` | —（缺陷） | `.gitignore` | 修复后源码包进入版本控制 |
+| F2 | `.gitignore` 补 `/raw/` | —（配套） | `.gitignore` | 原始下载目录不入库 |
 
 ## 2. 数据与日历
 
@@ -102,6 +106,74 @@ PEMS-BAY 在原始第 20183 步附近缺了 12 个 5 分钟样本（相邻 tod �
 | PEMS-BAY | 1.064 | 速度，周末更高 |
 
 这只能说明星期相位与数据形态一致，**不能替代发布方原始时间戳**。若拿到原始时间戳，应替换 `data/<NAME>/calendar.npz` 并重跑 `prepare-data`（签名会变）。
+
+### X10 `scripts/fetch_data.py` 与 `provenance/raw_sources.json`
+
+**做了什么**
+
+- 仓库不 vendor 数据；`provenance/raw_sources.json` 登记每个**上游原始文件**的下载 URL（可多个回退）、字节数、sha256、来源仓库与许可。
+- `fetch_data.py` 按顺序尝试 URL，下载到 `.part`，校验大小与 sha256 后才原子改名；失败删除临时文件并返回非零。
+- 支持 `archive:<tarball>#<member>` 形式：先下载一次 tarball 并缓存到 `<dest>/.cache/`，再从归档中取单个成员。用于 raw.githubusercontent 不稳定时的回退。
+- `--verify-only` 只校验已下载文件，不联网；`--force` 强制重下。
+
+**为什么算计划外**
+
+设计合同只要求“记录来源”，没有要求“可下载、可校验”。机器上只会提供上游原始文件，所以把来源记录升级成可执行校验链是必要的，但不是原计划内容。
+
+**验证**
+
+六个数据集共 13 个文件全部通过真实下载与 sha256 校验。六个 `data.npz`、四个 PEMS `*.csv`、`PEMS03.txt`、两个 Zenodo `adj_mx*.pkl` 与本地审计副本**逐字节相同**。
+
+**已知限制**
+
+URL 指向仓库默认分支，上游若强行改历史，只能靠 sha256 拦截（会失败而不是静默接受）；没有为每个文件固定 commit。
+
+### X11 `scripts/import_raw.py`
+
+**做了什么**
+
+把上游原始格式转换成 `prepare-data` 期望的布局，转换规则全部显式：
+
+| 输入 | 处理 |
+|---|---|
+| `.npz`（key `data`/`values`） | 已是规范形态则**逐字节复制**；否则重写 `data.npz` |
+| `.npy` | 写 `data.npz` |
+| `.h5`（可选 `h5py`） | 读数值与 `axis0` 时间戳 |
+| `.csv`（带时间列） | 拆出数值与 `datetime64[s]` |
+| `.pkl` 邻接（`(ids, id_to_ind, adj)` / `(ids, adj)` / ndarray / scipy sparse） | 受限 `Unpickler`，仅允许 numpy/scipy；`adj>0` → 去对角 → 双向并集 → `i<j` |
+| `.npz`/`.npy`/`.csv`/`.txt` 边表 | 映射节点 id、去自环、去重 |
+
+关键点：
+
+- **受限反序列化**：`pickle` 只允许 `numpy`/`scipy` 顶层模块，其他类直接拒绝，防止数据文件执行任意代码。
+- **日历通道检测**：不能只看通道数。ASTGNN 的 PEMS04/08 `data.npz` 也是 3 通道，但通道 1/2 是 occupancy/speed。检测要求 dow 为 0..6 整数、逐日 +1、tod 每日回绕；PEMS-BAY 的 1 小时缺口仍能通过，因为判据是“每日回绕次数”而不是“严格周期”。
+- **不覆盖已审计文件**：目标已存在时默认失败，必须显式 `--force`。
+- 每次导入写 `data/<NAME>/RAW_SOURCE.json`：上游文件名、sha256、转换动作、边数、日历模式与假设、输出文件 hash。
+
+**验证**
+
+六数据集导入后 `prepare-data` 的 `data_hash / valid_hash / graph_hash / split_hash / scaler_hash / node_order_hash / 窗口数 / calendar_hash` 全部与审计副本一致（见 X12）。
+
+### X12 Golden hash 回归测试
+
+**做了什么**
+
+- `tests/data/golden_prepared.json` 记录六数据集审计副本的 prepared hash 与窗口数。
+- `tests/integration/test_raw_import_golden.py` 在临时 `data_root` 中执行 `import_raw.py` → `prepare_dataset` → 逐项断言。
+- 默认跳过；设置 `SBONA_RAW_DIR` 后启用，约 30 s。
+
+**为什么算计划外**
+
+合同要求“数据/接口正确”，但没有规定机器可验证的判定方式。只写“已核验”无法在干净机器上复现；golden hash 把“核验过”变成一条可执行断言。
+
+**验证**
+
+```
+SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
+7 passed
+```
+
+这七个断言覆盖：序列数值、缺失/零值掩码、图上边集、窗口切分、train-only 标定、节点顺序、日历表。任一上游文件被替换或转换逻辑被改动都会失败。
 
 ## 3. 数据集扩展
 
@@ -214,7 +286,9 @@ PEMS-BAY 在原始第 20183 步附近缺了 12 个 5 分钟样本（相邻 tod �
 当前总结果：
 
 ```text
-pytest -q  -> 65 passed, 1 skipped   (跳过项：无 CUDA，GPU smoke 不声称)
+pytest -q  -> 77 passed, 8 skipped
+              (8 = GPU smoke 无 CUDA + 7 个 opt-in 原始数据 golden 测试)
+SBONA_RAW_DIR=raw pytest tests/integration/test_raw_import_golden.py -q -> 7 passed
 ruff check src tests scripts -> All checks passed
 ```
 

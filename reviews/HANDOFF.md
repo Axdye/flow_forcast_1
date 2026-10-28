@@ -47,8 +47,11 @@
 ```bash
 cd /Users/ljw/Documents/code/SBoN-Adapter
 python -m pytest -q
-# 65 passed, 1 skipped
-# skipped: tests/gpu/test_gpu_smoke.py (CUDA unavailable)
+# 77 passed, 8 skipped
+# skipped: GPU smoke (no CUDA) + 7 opt-in raw-import golden tests
+
+SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
+# 7 passed
 
 ruff check src tests scripts
 # All checks passed
@@ -117,15 +120,18 @@ python -m sbona.cli prepare-data \
 - **METR-LA / PEMS-BAY 已接入配置但未训练**：`derived_binary_undirected` 与 `speed (mph)` 协议已实现，`prepare-data` 与 CPU 前向通过；没有 checkpoint 或指标，不能声称可复现论文结果。
 - **probe 对数据长度有要求**：小型 synthetic fixture 会因 R/Q 窗口不足而 fail-fast；1200 步 synthetic 已验证可运行。
 - **上游 STAEformer 许可**：本地 pin commit `fc49d39b2f1a8e3cf37b6289d7240680e1690f3f` 无 LICENSE，因此本仓按其架构重实现，未直接复制源码。
+- **上游 URL 指向默认分支**：`provenance/raw_sources.json` 用 sha256 拦截漂移，但没有为每个文件固定 commit；上游改写历史时会失败而不是静默换数据。
 
 ## 4.1 数据与日历（2026-10-28 更新）
 
 - `data/` 已放入 PEMS03/04/07/08 的 `data.npz`、图 CSV、PEMS03 节点 ID 与 `calendar.npz`；全部经 `prepare-data` 验证。
+- **干净机器复现链已可执行**：`python scripts/fetch_data.py --all --dest raw` 下载并按 sha256 校验 13 个上游原始文件；`python scripts/import_raw.py --all --raw-dir raw --data-root data` 归一化为 `prepare-data` 布局，并写 `data/<NAME>/RAW_SOURCE.json`。上游文件与本地审计副本逐字节相同。
+- **golden hash 对账**：`SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q` → 7 passed，断言 `data/valid/graph/split/scaler/node_order/calendar` hash 与窗口数与审计副本完全一致。
 - 新增 `data.timestamps_file` 配置项：支持 `.npy`/`.npz` 的 `datetime64 [M]`、整数 `[M]` 或 `(tod, dow) [M,2]` 表；文件 sha256 进入 prepare signature，改动即重建。
 - `build_calendar` 新增 `[M,2]` 分支，要求 tod ∈ [0,1)、dow 为整数 0..6；不再默默把全零当周一。
 - 四个 PEMS 配置已启用 `day_of_week: true` 与 `dow_embedding_dim: 24`（上游默认值）；PEMS08 CPU 前向已验证嵌入路径。
 - METR-LA / PEMS-BAY 的邻接取自 Zenodo 5724362（CC-BY-4.0），已核验节点顺序与起始时间；转换后 METR-LA 1313 条无向边、PEMS-BAY 2079 条。配置使用 `derived_binary_undirected`（上游矩阵非对称）、`data.unit: speed (mph)` 与 `official_compat_nonzero`；已完成 `prepare-data` 与 CPU 前向，未训练。详见 `reviews/DATA_PROVENANCE.md`。
-- 计划外实现（外部日历、派生拓扑、单位协议、额外数据集、`.gitignore` 修复、已知偏离）汇总在 `reviews/EXTRA_WORK.md`。
+- 计划外实现（外部日历、派生拓扑、单位协议、额外数据集、下载/导入脚本、golden hash 测试、`.gitignore` 修复、已知偏离）汇总在 `reviews/EXTRA_WORK.md`。
 
 ## 5. 建议下一步
 

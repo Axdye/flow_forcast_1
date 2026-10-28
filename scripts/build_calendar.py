@@ -56,12 +56,31 @@ def build_table(
     tod_channel: int,
     dow_channel: int,
 ) -> tuple[np.ndarray, dict[str, object]]:
-    if not 0 <= start_weekday <= 6:
-        raise ValueError("start_weekday must be in 0..6 (Monday=0)")
     with np.load(data_path, allow_pickle=False) as archive:
         if "data" not in archive:
             raise ValueError(f"{data_path} must contain a 'data' array")
         array = np.asarray(archive["data"])
+    return build_table_from_array(
+        array,
+        start_weekday=start_weekday,
+        steps_per_day=steps_per_day,
+        tod_channel=tod_channel,
+        dow_channel=dow_channel,
+        source=str(data_path),
+    )
+
+
+def build_table_from_array(
+    array: np.ndarray,
+    start_weekday: int,
+    steps_per_day: int,
+    tod_channel: int = 1,
+    dow_channel: int = 2,
+    source: str = "<array>",
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Same as :func:`build_table` but without touching the filesystem."""
+    if not 0 <= start_weekday <= 6:
+        raise ValueError("start_weekday must be in 0..6 (Monday=0)")
     if array.ndim != 3 or array.shape[-1] <= max(tod_channel, dow_channel):
         raise ValueError(
             f"expected data [M, N, C] with channels {tod_channel}/{dow_channel}, got {array.shape}"
@@ -84,7 +103,7 @@ def build_table(
         "steps_per_day": int(steps_per_day),
         "tod_channel": int(tod_channel),
         "dow_channel": int(dow_channel),
-        "source": str(data_path),
+        "source": source,
     }
     return table, info
 

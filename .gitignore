@@ -12,6 +12,7 @@ venv/
 # Artifact directories are anchored to the repository root so source packages
 # such as src/sbona/data/ are never ignored by a bare ``data/`` pattern.
 /data/
+/raw/
 /datasets/
 /outputs/
 /checkpoints/
