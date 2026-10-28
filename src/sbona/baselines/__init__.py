@@ -11,6 +11,7 @@ from dataclasses import replace
 
 from sbona.backbones import build_backbone
 from sbona.baselines.independent_heads import IndependentHeads
+from sbona.baselines.mcl_wta import MCLWTA
 from sbona.baselines.perturbation import gaussian_candidates
 from sbona.baselines.single import SingleAdapter
 from sbona.baselines.unstructured import UnstructuredDecoder
@@ -21,7 +22,7 @@ from sbona.models.decoder import StructuredDecoder
 from sbona.models.projector import FeatureProjector
 from sbona.models.router import Router
 
-ADAPTER_KINDS = ("structured", "single", "unstructured", "independent_heads")
+ADAPTER_KINDS = ("structured", "single", "unstructured", "independent_heads", "mcl_wta")
 
 
 def build_adapter(
@@ -47,6 +48,16 @@ def build_adapter(
         steps_per_day=steps_per_day,
     )
     projector = FeatureProjector(backbone.node_feature_dim, active_cfg.adapter.hidden_dim)
+    if kind == "mcl_wta":
+        # No Stage-D Router: the score head is trained jointly in Stage C and is
+        # itself the deployed selector.
+        return MCLWTA(
+            backbone=backbone,
+            projector=projector,
+            config=active_cfg,
+            num_candidates=num_candidates,
+            head_width=head_width,
+        )
     router = Router(
         hidden_dim=active_cfg.adapter.hidden_dim,
         num_candidates=num_candidates,
@@ -110,5 +121,6 @@ __all__ = [
     "SingleAdapter",
     "UnstructuredDecoder",
     "IndependentHeads",
+    "MCLWTA",
     "gaussian_candidates",
 ]

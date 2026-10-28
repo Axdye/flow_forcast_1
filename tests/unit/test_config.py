@@ -126,3 +126,115 @@ def test_no_legacy_absolute_paths_in_experiment_configs() -> None:
         text = path.read_text(encoding="utf-8")
         assert "/root/Flow-RL" not in text
         assert "/Users/" not in text
+
+
+def test_backbone_params_default_to_the_official_values() -> None:
+    raw = _base_dict()
+    raw["backbone"] = {"name": "agcrn"}
+    cfg = Config.from_dict(raw)
+    # PEMS08 official configuration (BasicTS v0.5.8 ``AGCRN.yaml``).
+    assert cfg.backbone.params == {
+        "rnn_units": 64,
+        "num_layers": 2,
+        "cheb_k": 2,
+        "embed_dim": 2,
+    }
+
+
+def test_backbone_params_override_keeps_other_defaults() -> None:
+    raw = _base_dict()
+    raw["backbone"] = {"name": "graph_wavenet", "params": {"blocks": 2, "dropout": 0.2}}
+    cfg = Config.from_dict(raw)
+    assert cfg.backbone.params["blocks"] == 2
+    assert cfg.backbone.params["dropout"] == pytest.approx(0.2)
+    assert cfg.backbone.params["layers"] == 2
+    assert cfg.backbone.params["gcn_order"] == 2
+
+
+def test_backbone_params_reject_unknown_keys() -> None:
+    raw = _base_dict()
+    raw["backbone"] = {"name": "stid", "params": {"not_a_knob": 1}}
+    with pytest.raises(ConfigError, match="unknown key\\(s\\) in backbone.params"):
+        Config.from_dict(raw)
+
+
+def test_backbone_params_reject_another_architectures_knob() -> None:
+    raw = _base_dict()
+    # STAEformer is configured entirely by its flat fields; ``rnn_units`` is an
+    # AGCRN knob and must not silently travel through ``params``.
+    raw["backbone"] = {"name": "staeformer", "params": {"rnn_units": 64}}
+    with pytest.raises(ConfigError, match="unknown key\\(s\\) in backbone.params"):
+        Config.from_dict(raw)
+
+
+def test_backbone_params_reject_wrong_types() -> None:
+    raw = _base_dict()
+    raw["backbone"] = {"name": "d2stgnn", "params": {"k_s": 2.5}}
+    with pytest.raises(ConfigError, match="must be an integer"):
+        Config.from_dict(raw)
+
+    raw["backbone"] = {"name": "graph_wavenet", "params": {"add_adaptive_adj": 1}}
+    with pytest.raises(ConfigError, match="must be a boolean"):
+        Config.from_dict(raw)
+
+
+def test_staeformer_input_dim_accepts_the_official_three_channel_projection() -> None:
+    for input_dim in (1, 3):
+        raw = _base_dict()
+        raw["backbone"] = {"name": "staeformer", "mode": "frozen", "input_dim": input_dim}
+        assert Config.from_dict(raw).backbone.input_dim == input_dim
+
+    raw = _base_dict()
+    raw["backbone"] = {"name": "staeformer", "input_dim": 2}
+    with pytest.raises(ConfigError, match="input_dim must be 1 .* or 3"):
+        Config.from_dict(raw)
+
+
+def test_wta_score_weight_is_parsed_and_validated() -> None:
+    raw = _base_dict()
+    raw["loss"] = {"wta_score": 0.25}
+    assert Config.from_dict(raw).loss.wta_score == pytest.approx(0.25)
+
+    raw["loss"] = {"wta_score": -1.0}
+    with pytest.raises(ConfigError, match="loss.wta_score must be >= 0"):
+        Config.from_dict(raw)
+
+
+def test_shipped_experiment_configs_still_parse() -> None:
+    root = Path(__file__).resolve().parents[2] / "configs" / "experiments"
+    paths = sorted(root.glob("*.yaml"))
+    assert paths
+    for path in paths:
+        with path.open("r", encoding="utf-8") as handle:
+            import yaml
+
+            Config.from_dict(yaml.safe_load(handle))
+
+
+def test_every_backbone_has_a_pems08_experiment_config() -> None:
+    import yaml
+
+    from sbona.config import BACKBONE_PARAM_DEFAULTS, SUPPORTED_BACKBONES
+
+    root = Path(__file__).resolve().parents[2] / "configs" / "experiments"
+    for name in SUPPORTED_BACKBONES:
+        path = root / f"pems08_{name}.yaml"
+        assert path.is_file(), f"missing PEMS08 config for {name}"
+        cfg = Config.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
+        assert cfg.backbone.name == name
+        # Each shipped config must pin the official defaults explicitly, so a
+        # later change to ``BACKBONE_PARAM_DEFAULTS`` cannot silently change an
+        # experiment that was already recorded.
+        assert cfg.backbone.params == BACKBONE_PARAM_DEFAULTS[name]
+
+
+def test_mcl_wta_config_selects_the_wta_baseline() -> None:
+    import yaml
+
+    path = Path(__file__).resolve().parents[2] / "configs" / "experiments" / "pems08_mcl_wta.yaml"
+    cfg = Config.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
+    # The CLI appends the kind, so the stored run is ``sbona_mcl_wta``.
+    assert cfg.method_id == "sbona"
+    assert cfg.adapter.num_candidates >= 2
+    assert cfg.loss.wta_score > 0
+

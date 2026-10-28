@@ -19,10 +19,116 @@ from typing import Any
 
 import yaml
 
-SUPPORTED_BACKBONES = ("staeformer", "stid", "graph_wavenet", "agcrn")
+SUPPORTED_BACKBONES = (
+    "staeformer",
+    "graph_wavenet",
+    "agcrn",
+    "stid",
+    "d2stgnn",
+    "pdformer",
+    "himnet",
+    "stssdl",
+    "hyperd",
+)
 SUPPORTED_MODES = ("frozen", "partial", "full")
 SUPPORTED_PRECISIONS = ("fp32", "bf16")
 SUPPORTED_SPLITS = ("train", "val", "test")
+
+#: Extra architecture-specific hyperparameters, accepted through
+#: ``backbone.params``.  Only architectures that need more than the flat
+#: STAEformer fields have entries; the values are the *official* published
+#: defaults for PEMS08 (see ``third_party/BACKBONE_CONTRACTS.md``).  Key sets are
+#: strict per architecture: ``params`` may not carry another model's knob.
+BACKBONE_PARAM_DEFAULTS: dict[str, dict[str, Any]] = {
+    "staeformer": {},
+    "graph_wavenet": {
+        "dropout": 0.3,
+        "gcn_order": 2,
+        "residual_channels": 32,
+        "dilation_channels": 32,
+        "skip_channels": 256,
+        "end_channels": 512,
+        "kernel_size": 2,
+        "blocks": 4,
+        "layers": 2,
+        "add_adaptive_adj": True,
+        "adaptive_rank": 10,
+    },
+    "agcrn": {
+        "rnn_units": 64,
+        "num_layers": 2,
+        "cheb_k": 2,
+        "embed_dim": 2,
+    },
+    "stid": {
+        "embed_dim": 32,
+        "num_layers": 3,
+        "node_dim": 32,
+        "temp_dim_tid": 32,
+        "temp_dim_diw": 32,
+        "if_node": True,
+        "if_time_in_day": True,
+        "if_day_in_week": True,
+        "dropout": 0.15,
+    },
+    "d2stgnn": {
+        "num_hidden": 32,
+        "node_hidden": 10,
+        "time_emb_dim": 10,
+        "dropout": 0.1,
+        "k_t": 3,
+        "k_s": 2,
+        "gap": 3,
+        "num_layers": 5,
+        "forecast_dim": 256,
+        "output_hidden": 512,
+        "num_heads": 4,
+    },
+    "pdformer": {
+        "embed_dim": 64,
+        "skip_dim": 256,
+        "lape_dim": 8,
+        "geo_num_heads": 4,
+        "sem_num_heads": 2,
+        "t_num_heads": 2,
+        "mlp_ratio": 4.0,
+        "qkv_bias": True,
+        "drop": 0.0,
+        "attn_drop": 0.0,
+        "drop_path": 0.3,
+        "s_attn_size": 3,
+        "enc_depth": 6,
+        "type_ln": "post",
+        "far_mask_delta": 5,
+    },
+    "himnet": {
+        "hidden_dim": 96,
+        "num_layers": 1,
+        "cheb_k": 2,
+        "tod_embedding_dim": 10,
+        "dow_embedding_dim": 2,
+        "node_embedding_dim": 14,
+        "st_embedding_dim": 10,
+        "dropout": 0.0,
+    },
+    "stssdl": {
+        "rnn_units": 12,
+        "rnn_layers": 1,
+        "cheb_k": 3,
+        "prototype_num": 20,
+        "prototype_dim": 64,
+        "tod_embed_dim": 20,
+        "adaptive_embedding_dim": 0,
+        "node_embedding_dim": 20,
+        "input_embedding_dim": 16,
+        "use_ste": True,
+    },
+    "hyperd": {
+        "embed_size": 64,
+        "hidden_size": 128,
+        "fc_hidden_size": 512,
+    },
+}
 
 _DEFAULT_MAX_EPOCHS = {"base": 100, "single": 80, "candidates": 80, "router": 40, "probe": 40}
 _DEFAULT_PATIENCE = {"base": 15, "single": 15, "candidates": 15, "router": 10, "probe": 10}
@@ -56,6 +162,46 @@ def _as_int(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{name} must be an integer, got {value!r}")
     return value
+
+
+def _coerce_backbone_param(key: str, value: Any, default: Any) -> Any:
+    """Type-check one ``backbone.params`` entry against its official default."""
+    name = f"backbone.params.{key}"
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise ConfigError(f"{name} must be a boolean, got {value!r}")
+        return value
+    if isinstance(default, int):
+        return _as_int(value, name)
+    if isinstance(default, float):
+        return _as_float(value, name)
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            raise ConfigError(f"{name} must be a string, got {value!r}")
+        return value
+    raise ConfigError(f"{name} has an unsupported default type {type(default).__name__}")
+
+
+def backbone_params(name: str, raw: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Merge ``params`` with the official defaults, rejecting unknown keys.
+
+    ``backbone.params`` is additive: a config that omits it gets the published
+    PEMS08 values, and a config that names one knob keeps every other default.
+    """
+    if name not in BACKBONE_PARAM_DEFAULTS:
+        raise ConfigError(f"unknown backbone.name {name!r}")
+    defaults = BACKBONE_PARAM_DEFAULTS[name]
+    data = dict(raw or {})
+    unknown = sorted(set(data) - set(defaults))
+    if unknown:
+        raise ConfigError(
+            f"unknown key(s) in backbone.params for {name!r}: {unknown}; "
+            f"allowed: {sorted(defaults)}"
+        )
+    merged: dict[str, Any] = {}
+    for key, default in defaults.items():
+        merged[key] = _coerce_backbone_param(key, data.get(key, default), default)
+    return merged
 
 
 @dataclass(frozen=True)
@@ -249,7 +395,9 @@ class GraphConfig:
 class BackboneConfig:
     name: str = "staeformer"
     mode: str = "frozen"
-    input_dim: int = 1
+    # Official STAEformer projects ``[flow, tod, dow]`` (``input_dim: 3``);
+    # ``1`` keeps the older flow-only projection and is still accepted.
+    input_dim: int = 3
     use_mixed_proj: bool = True
     input_embedding_dim: int = 24
     tod_embedding_dim: int = 24
@@ -261,6 +409,10 @@ class BackboneConfig:
     num_layers: int = 3
     dropout: float = 0.1
     partial_unfreeze_last_n_spatial: int = 1
+    # Architecture-specific knobs; see ``BACKBONE_PARAM_DEFAULTS``.  Kept
+    # separate from the flat STAEformer fields so existing configs and their
+    # hashes stay valid without a schema bump.
+    params: Mapping[str, Any] = field(default_factory=dict)
 
     ALLOWED = (
         "name",
@@ -277,16 +429,20 @@ class BackboneConfig:
         "num_layers",
         "dropout",
         "partial_unfreeze_last_n_spatial",
+        "params",
     )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | None) -> BackboneConfig:
         data = dict(data or {})
         _strict_map(data, cls.ALLOWED, "backbone")
+        name = str(data.get("name", "staeformer"))
+        if name not in SUPPORTED_BACKBONES:
+            raise ConfigError(f"unknown backbone.name {name!r}")
         cfg = cls(
-            name=str(data.get("name", "staeformer")),
+            name=name,
             mode=str(data.get("mode", "frozen")),
-            input_dim=_as_int(data.get("input_dim", 1), "backbone.input_dim"),
+            input_dim=_as_int(data.get("input_dim", 3), "backbone.input_dim"),
             use_mixed_proj=bool(data.get("use_mixed_proj", True)),
             input_embedding_dim=_as_int(data.get("input_embedding_dim", 24), "backbone.input_embedding_dim"),
             tod_embedding_dim=_as_int(data.get("tod_embedding_dim", 24), "backbone.tod_embedding_dim"),
@@ -301,6 +457,7 @@ class BackboneConfig:
                 data.get("partial_unfreeze_last_n_spatial", 1),
                 "backbone.partial_unfreeze_last_n_spatial",
             ),
+            params=backbone_params(name, data.get("params")),
         )
         cfg.validate()
         return cfg
@@ -314,8 +471,21 @@ class BackboneConfig:
         _require(self.num_layers >= 1, "backbone.num_layers must be >= 1")
         _require(0.0 <= self.dropout < 1.0, "backbone.dropout must be in [0, 1)")
         _require(self.partial_unfreeze_last_n_spatial >= 1, "partial_unfreeze_last_n_spatial must be >= 1")
+        allowed = BACKBONE_PARAM_DEFAULTS[self.name]
+        unknown = sorted(set(self.params) - set(allowed))
+        _require(
+            not unknown,
+            f"unknown key(s) in backbone.params for {self.name!r}: {unknown}; "
+            f"allowed: {sorted(allowed)}",
+        )
+        for key, default in allowed.items():
+            _coerce_backbone_param(key, self.params[key], default)
         if self.name == "staeformer":
-            _require(self.input_dim == 1, "STAEformer v1 must use input_dim=1 (flow-only projection)")
+            _require(
+                self.input_dim in (1, 3),
+                "STAEformer input_dim must be 1 (flow-only projection) or 3 "
+                "(official [flow, tod, dow] projection)",
+            )
             _require(self.use_mixed_proj, "STAEformer v1 requires use_mixed_proj=True")
             dims = (
                 self.input_embedding_dim
@@ -473,6 +643,9 @@ class LossConfig:
     router_kl: float = 1.0
     regret: float = 0.2
     balance_max: float = 0.01
+    #: Weight of the MCL-WTA score-head cross-entropy.  Only read by the
+    #: ``mcl_wta`` baseline; every other method ignores it.
+    wta_score: float = 0.1
 
     ALLOWED = (
         "consistency",
@@ -485,6 +658,7 @@ class LossConfig:
         "router_kl",
         "regret",
         "balance_max",
+        "wta_score",
     )
 
     @classmethod
@@ -502,6 +676,7 @@ class LossConfig:
             router_kl=_as_float(data.get("router_kl", 1.0), "loss.router_kl"),
             regret=_as_float(data.get("regret", 0.2), "loss.regret"),
             balance_max=_as_float(data.get("balance_max", 0.01), "loss.balance_max"),
+            wta_score=_as_float(data.get("wta_score", 0.1), "loss.wta_score"),
         )
         cfg.validate()
         return cfg
@@ -517,6 +692,7 @@ class LossConfig:
             "router_kl",
             "regret",
             "balance_max",
+            "wta_score",
         ):
             _require(getattr(self, name) >= 0, f"loss.{name} must be >= 0")
         _require(0.0 <= self.epsilon_floor <= 1.0, "loss.epsilon_floor must be in [0, 1]")

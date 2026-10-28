@@ -1,0 +1,86 @@
+# Stage A: PEMS08 + AGCRN base backbone (official PEMS08 defaults).
+# Stage A always trains the backbone in "full" mode; the stored mode below
+# is the adapter-time mode used after the Base checkpoint is frozen.
+# Upstream licence: MIT. See third_party/LOCK.md and BACKBONE_CONTRACTS.md.
+#
+# `backbone.input_dim` is only read by STAEformer; every other adapter declares its
+# own channels in `backbones.common.FEATURE_SPECS` and ignores this key.
+# Documented deviations from the official code:
+#   - 自适应图：不读道路图，支撑每次调用重算
+#   - 去掉官方 forward 中未使用的 targets 参数
+#   - 官方 PEMS08 配置 input_dim=1（flow only）
+
+schema_version: 1
+protocol_id: flow_12x12_v1
+method_id: sbona_base
+seed: 11
+
+data:
+  dataset: PEMS08
+  input_steps: 12
+  output_steps: 12
+  split_ratios: [0.6, 0.2, 0.2]
+  steps_per_day: 288
+  scaler: global_standard_train_only
+  missing_policy: source_mask_else_nonfinite
+  zeros_are_valid: true
+  envelope_quantile: 0.995
+  envelope_min_count: 1000
+  mape_min_abs_target: 1.0
+  data_file: PEMS08/data.npz
+  graph_file: PEMS08/PEMS08.csv
+  timestamps_file: PEMS08/calendar.npz
+  timestamps_available: true
+  time_of_day: true
+  day_of_week: true
+  flow_channel: 0
+
+graph:
+  topology: published_binary_undirected
+  diffusion: row_normalized_with_self_loops
+  representation: sparse_coo
+
+backbone:
+  name: agcrn
+  mode: frozen
+  input_dim: 3
+  params:
+    rnn_units: 64
+    num_layers: 2
+    cheb_k: 2
+    embed_dim: 2
+
+adapter:
+  num_candidates: 8
+  hidden_dim: 64
+  residual_dim: 32
+  graph_hops: 3
+  sigma_min: 0.05
+  local_branch: false
+  film: false
+  s_p: 1.0
+  s_o: 0.5
+  s_d: 0.5
+  residual_scale: 3.0
+  output_init_std: 0.001
+
+training:
+  precision: fp32
+  initial_batch_size: 32
+  eval_batch_size: 64
+  base_lr: 0.001
+  weight_decay: 0.0001
+  gradient_clip: 5.0
+  max_epochs: {base: 100, single: 80, candidates: 80, router: 40, probe: 40}
+  patience: {base: 15, single: 15, candidates: 15, router: 10, probe: 10}
+  scheduler: constant
+  checkpoint_min_delta: 0.00001
+
+evaluation:
+  primary_metric: raw_mae_all
+  horizons: [3, 6, 12]
+  clip_predictions: false
+  selection_granularity: whole_sample_trajectory
+  bootstrap_replicates: 10000
+  block_origins: 288
+  bootstrap_seed: 20261028

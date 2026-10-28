@@ -34,7 +34,7 @@ graph:
 backbone:
   name: staeformer
   mode: frozen
-  input_dim: 1
+  input_dim: 3
   use_mixed_proj: true
   dow_embedding_dim: 24
 

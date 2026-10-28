@@ -778,6 +778,9 @@ def cmd_train_candidates(args: argparse.Namespace) -> int:
     if kind != "structured":
         active_cfg = replace(cfg, method_id=f"{cfg.method_id}_{kind}")
         active_cfg.validate()
+    if kind == "mcl_wta" and int(active_cfg.adapter.num_candidates) < 2:
+        # Winner-takes-all needs at least one loser per sample.
+        raise ValueError("the mcl_wta baseline requires adapter.num_candidates >= 2")
     run, _, manifest = _make_run(
         args,
         active_cfg,
@@ -844,6 +847,14 @@ def cmd_train_router(args: argparse.Namespace) -> int:
     device = _device(args, cfg)
     candidate_checkpoint = _candidate_checkpoint(args, output_root, prepared, cfg)
     payload = load_checkpoint(candidate_checkpoint, map_location=device)
+    kind = payload.get("model_kind", "structured")
+    if kind == "mcl_wta":
+        # Checked before the identity guard: this failure is a property of the
+        # method, not of the seed/protocol/K the caller passed.
+        raise ValueError(
+            "mcl_wta has no Stage-D Router: its score head is trained jointly with "
+            "the heads in Stage C; evaluate the Stage-C run directly instead"
+        )
     if payload.get("hashes", {}).get("num_candidates") != cfg.adapter.num_candidates:
         raise ValueError(
             "candidate checkpoint K does not match adapter.num_candidates: "
@@ -862,7 +873,6 @@ def cmd_train_router(args: argparse.Namespace) -> int:
         )
     if int(cfg.adapter.num_candidates) < 2:
         raise ValueError("Router training requires K >= 2")
-    kind = payload.get("model_kind", "structured")
     model = build_adapter(
         kind,
         cfg,
@@ -1187,6 +1197,9 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     if stage not in ("B", "C", "D"):
         raise ValueError(f"cannot evaluate unsupported checkpoint stage {stage!r}")
     kind = str(payload.get("model_kind", "structured"))
+    # ``mcl_wta`` deploys its jointly trained score head instead of a Router, so
+    # there is no stage-D checkpoint to look for (and none can exist).
+    score_selector = kind == "mcl_wta"
     model = build_adapter(
         kind,
         cfg,
@@ -1195,7 +1208,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     )
     load_state_dict_strict(model, payload["state_dict"], f"stage {stage} model")
 
-    router_available = stage == "D"
+    router_available = stage == "D" or score_selector
     if not router_available and int(model.num_candidates) > 1:
         router_checkpoint = _router_checkpoint_for(args, output_root, prepared, cfg)
         if router_checkpoint is None:
@@ -1217,7 +1230,11 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         load_state_dict_strict(model, router_payload["state_dict"], "router model")
         router_available = True
 
-    if stage == "B" and int(model.num_candidates) == 1:
+    if score_selector:
+        # The score head lives in the stage-C model; ``set_stage("D")`` would
+        # reject a selector that was already trained.
+        model.set_stage("C")
+    elif stage == "B" and int(model.num_candidates) == 1:
         model.set_stage("B")
     else:
         model.set_stage("D" if router_available else "C")
@@ -1248,6 +1265,10 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     result.document["checkpoint"] = str(checkpoint)
     result.document["checkpoint_stage"] = stage
     result.document["source_run"] = str(run_dir)
+    if score_selector:
+        # The runner reports the deployed policy under the generic ``router``
+        # key; record what it actually is so artifacts are not misread.
+        result.document["selector"] = "score_head"
     eval_run.write_metrics(result.document)
     write_json(eval_run.path(f"metrics_{split}.json"), result.document)
     _update_manifest(
@@ -1260,10 +1281,16 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 
     rows: list[dict[str, Any]] = []
     if router_available:
+        # ``mcl_wta`` selects with its score head, so its row must not be read
+        # as a trained Stage-D Router result.
         rows.append(
             {
-                "method": f"{cfg.method_id}_router",
-                "metric": "router_raw_mae_all",
+                "method": (
+                    f"{cfg.method_id}_score_top1"
+                    if score_selector
+                    else f"{cfg.method_id}_router"
+                ),
+                "metric": "raw_mae_all" if score_selector else "router_raw_mae_all",
                 "value": result.document["router"].get("raw_mae_all"),
                 "split": split,
                 "deployable": True,
@@ -1316,7 +1343,8 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     print(f"split: {split}")
     print(f"base raw MAE: {result.document['base'].get('raw_mae_all')}")
     if router_available:
-        print(f"Router@1 raw MAE: {result.document['router'].get('raw_mae_all')}")
+        label = "ScoreTop1@1" if score_selector else "Router@1"
+        print(f"{label} raw MAE: {result.document['router'].get('raw_mae_all')}")
     if "single" in result.document:
         print(f"single raw MAE: {result.document['single'].get('raw_mae_all')}")
     print(f"Oracle MAE raw MAE: {result.document['oracle_mae'].get('raw_mae_all')}")
@@ -1392,8 +1420,11 @@ def cmd_profile(args: argparse.Namespace) -> int:
             steps_per_day=prepared.steps_per_day,
         )
         load_state_dict_strict(model, payload["state_dict"], f"stage {stage} model")
-        router_available = stage == "D"
-        if stage in ("B", "C") and int(model.num_candidates) > 1:
+        # ``mcl_wta`` profiles its jointly trained score head; there is no
+        # stage-D Router to load.
+        score_selector = kind == "mcl_wta"
+        router_available = stage == "D" or score_selector
+        if stage in ("B", "C") and int(model.num_candidates) > 1 and not router_available:
             # Top-1 latency without a trained Router would profile an
             # untrained policy and cannot be reported as deployment latency.
             router_checkpoint = _router_checkpoint_for(args, output_root, prepared, cfg)
@@ -1415,7 +1446,9 @@ def cmd_profile(args: argparse.Namespace) -> int:
             )
             load_state_dict_strict(model, router_payload["state_dict"], "router model")
             router_available = True
-        if int(model.num_candidates) == 1:
+        if score_selector:
+            model.set_stage("C")
+        elif int(model.num_candidates) == 1:
             model.set_stage("B")
         else:
             model.set_stage("D" if router_available else "C")
@@ -1526,7 +1559,7 @@ def build_parser() -> argparse.ArgumentParser:
     candidates.add_argument("--base-checkpoint", type=Path, default=None)
     candidates.add_argument(
         "--kind",
-        choices=("structured", "unstructured", "independent_heads"),
+        choices=("structured", "unstructured", "independent_heads", "mcl_wta"),
         default="structured",
     )
     candidates.set_defaults(func=cmd_train_candidates)

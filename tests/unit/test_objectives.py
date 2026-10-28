@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+import pytest
 import torch
 
 from sbona.contracts import OracleOutput, ScalerStats, TargetBatch
@@ -84,6 +85,64 @@ def test_separation_loss_is_zero_for_one_candidate() -> None:
     loss, count = separation_loss(actions, torch.tensor([True, True]), margin=0.25)
     assert count == 2
     assert float(loss) == 0.0
+
+
+def test_wta_loss_routes_gradient_to_the_winner_only() -> None:
+    from sbona.objectives.losses import wta_loss
+
+    # Sample 0: candidate 1 is best (1.0); sample 1: candidate 2 is best (0.5).
+    error = torch.tensor([[3.0, 1.0, 2.0], [4.0, 5.0, 0.5]], requires_grad=True)
+    loss, count = wta_loss(error, torch.tensor([True, True]))
+    assert count == 2
+    assert math.isclose(float(loss), (1.0 + 0.5) / 2)
+    loss.backward()
+    grad = error.grad
+    assert grad is not None
+    # Only the winner coordinate per sample carries gradient (1 / batch).
+    assert torch.allclose(grad, torch.tensor([[0.0, 0.5, 0.0], [0.0, 0.0, 0.5]]))
+
+
+def test_wta_loss_ignores_invalid_samples() -> None:
+    from sbona.objectives.losses import wta_loss
+
+    error = torch.tensor([[1.0, 9.0], [0.0, 0.0]])
+    loss, count = wta_loss(error, torch.tensor([True, False]))
+    assert count == 1
+    assert math.isclose(float(loss), 1.0)
+    empty, count = wta_loss(error, torch.tensor([False, False]))
+    assert count == 0
+    assert float(empty) == 0.0
+
+
+def test_wta_loss_rejects_bad_shapes() -> None:
+    from sbona.objectives.losses import LossError, wta_loss
+
+    with pytest.raises(LossError, match=r"\[B, K\]"):
+        wta_loss(torch.zeros(2, 3, 1), torch.tensor([True, True]))
+
+
+def test_wta_score_loss_is_cross_entropy_against_the_detached_winner() -> None:
+    from sbona.objectives.losses import wta_score_loss
+
+    logits = torch.zeros(2, 3, requires_grad=True)
+    error = torch.tensor([[3.0, 1.0, 2.0], [4.0, 5.0, 0.5]])
+    loss, count = wta_score_loss(logits, error, torch.tensor([True, True]))
+    assert count == 2
+    assert math.isclose(float(loss), math.log(3.0), rel_tol=1e-6)
+    loss.backward()
+    grad = logits.grad
+    assert grad is not None
+    # Uniform logits -> ``(softmax - onehot) / batch``; the sign proves the target
+    # is the *winner* (index 1 for sample 0, index 2 for sample 1).
+    expected = torch.tensor([[1 / 6, -1 / 3, 1 / 6], [1 / 6, 1 / 6, -1 / 3]])
+    assert torch.allclose(grad, expected, atol=1e-6)
+
+
+def test_wta_score_loss_shape_mismatch_is_rejected() -> None:
+    from sbona.objectives.losses import LossError, wta_score_loss
+
+    with pytest.raises(LossError, match="share"):
+        wta_score_loss(torch.zeros(2, 2), torch.zeros(2, 3), torch.tensor([True, True]))
 
 
 def test_whole_sample_oracle_does_not_mix_per_node_or_horizon() -> None:

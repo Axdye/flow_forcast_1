@@ -112,6 +112,7 @@ class CandidateOutput:
     actions: ActionOutput
     h_global: Tensor         # [B,D]
     base_pred_z: Tensor      # [B,T,N,1]
+    candidate_logits: Tensor | None = None  # [B,K]，仅 mcl_wta 的 score head 产生
 
 @dataclass
 class Top1Output:
@@ -198,20 +199,21 @@ v1 使用数据发布方道路连接关系，二值拓扑。按 manifest 的节�
 
 ## 6. Backbone 接入与模式
 
-官方源码在 `third_party/LOCK.md` 指定版本内做最小 adapter，禁止从旧目录未提交的随机生成头开始。v1 先 STAEformer，再 STID、Graph WaveNet、AGCRN。每个 adapter 要有 original-forward 与 adapted-forward 的 raw/base 等价测试。
+官方源码在 `third_party/LOCK.md` 指定版本内做最小 adapter，禁止从旧目录未提交的随机生成头开始。v1 主线是 STAEformer，同一条 `BackboneWrapper` 合同上另接了八个官方架构（§6.3）。**BasicTS 只用于核对模型定义与官方超参，不是 runtime 依赖**；所有 adapter 都在本仓 `src/sbona/backbones/` 内实现。
+
+每个 adapter 必须有 original-forward 与 adapted-forward 的 raw/base 等价测试才能标为支持；本轮**没有**做这一层（没有官方 checkpoint），因此九个模型都只到“CPU 契约通过”，见 §16。
 
 ### 6.1 STAEformer 精确接口
 
-已检查本地 pristine Git commit `fc49d39b2f1a8e3cf37b6289d7240680e1690f3f` 的 `model/STAEformer.py`；在线固定版本若有差异，以 LOCK 与显式 diff 为准。
+已检查 pristine Git commit `fc49d39b2f1a8e3cf37b6289d7240680e1690f3f` 的 `model/STAEformer.py`。
 
-- `input_dim=1`，构造 `[flow_z,tod,dow]` 输入；flow 投影只读第 0 通道，日历进入原 embedding。
+- `input_dim=3`（官方值），构造 `[flow_z, tod, dow/7]` 输入；周几同时经 `dow_embedding_dim=24` 的 embedding 进入模型。`input_dim=1`（只投影 flow）仍是允许的 flow-only 消融，但默认与全部实验配置都是 3。
+- **weekday embedding 索引**：官方把 `dow/7` 分数直接 `.long()`，对任何一天都截断成 0。本仓保留分数进入输入投影，但 embedding 用 `round(dow*7)` 取整数索引。这是对官方 bug 的修正，必须在论文中披露。
 - 依序经过 `attn_layers_t`、`attn_layers_s` 后得到 `[B,L,N,model_dim]`，取 `x[:, -1, :, :]` 为 node_hidden。
 - 基础输出完整沿用原 `use_mixed_proj` 路径：transpose/flatten 后 `output_proj`。提取 hidden 不能改变原 forward 的基础预测。
 - v1 固定 `use_mixed_proj=True`；每数据集模型维度与层数来自锁定配置。
 - Partial 白名单：`attn_layers_s[-1]` 与 `output_proj`。其余被冻结，固定 dropout；不要把所有 normalization/bias 默认解冻。
 - 不在第二次 forward 中重算 hidden，避免算两遍 backbone。
-
-其他 backbone 的准确提取点由 [BACKBONE_CONTRACTS.md](../third_party/BACKBONE_CONTRACTS.md) 固定；对应任务必须核对源文件并通过等价测试后才能标为支持。
 
 ### 6.2 Frozen 的含义
 
@@ -220,6 +222,33 @@ v1 使用数据发布方道路连接关系，二值拓扑。按 manifest 的节�
 Partial/Full 则不能包住整个 backbone `no_grad`；Partial 的冻结子模块保持 eval，白名单模块 train。每个 run 输出 trainable 参数名和数量。优化器不包含冻结参数。
 
 不同训练阶段恢复后必须重新应用 mode 规则。不能只在构造函数里冻结一次。
+
+### 6.3 九个 backbone
+
+统一合同：`encode_and_predict(ModelInput, GraphContext) -> (node_hidden [B,N,D], base_pred_z [B,T,N,1])`，两者来自**一次** forward；`node_feature_dim` 就是 projector 的输入宽度。日历通道由 `backbones/common.py` 的 `FEATURE_SPECS` 显式声明（`flow / tod / dow_index / dow_fraction / dow_onehot`），不共享隐式约定。
+
+| backbone | 上游 commit | node hidden | Partial 白名单 | 读道路图 |
+|---|---|---|---|---|
+| staeformer | `fc49d39b` | 最后空间 attention 后最后历史步 | 最后 N 个空间层 + 输出投影 | 否 |
+| graph_wavenet | `6b162e80` | `end_conv_1` 之后 | `end_conv_1/2` | 是 |
+| agcrn | `7fbbf2ae` | encoder 最后一步 | `end_conv` | 否（自适应图） |
+| stid | `e8b313bc` | `regression_layer` 之前 | `encoder` + `regression_layer` | 否（无空间路径） |
+| d2stgnn | `82c2d38b` | 最后 decouple 的 forecast 输入 | `out_fc_1/2` | 是 |
+| pdformer | `f8c8f6ad` | 最后 encoder block 输出 | 最后 block + `end_conv2` | 是 |
+| himnet | `2a9aa44d` | 最后 `HimGCN` 输出 | `decoder` + `out_proj` | 否（学习支撑） |
+| stssdl | `a98331d3` | decoder 最后状态 | `decoder`/`proj`/`hypernet` | 是 |
+| hyperd | `5bd93a82` | `stfe` 的 token 表示 | `stfe.fc` + 两个周期线性层 | 是（经周期表） |
+
+图方向由 `GraphContext` 的定义决定：`A[i,j]` 表示“行 i 聚合列 j”。上游 `nconv` / `STLocalizedConv` 写成 `out[v]=Σ_w A[v,w]x[w]`，所以这两处喂 `(A.T, A)`；`AGCN` / `HimGCN` 的 `einsum("nm,bmc->bnc")` 与 HyperD 的 `einsum('ln,nv->lv')` 分别喂 `A` 与 `A.T`。逐模型细节与补丁见 [BACKBONE_CONTRACTS.md](../third_party/BACKBONE_CONTRACTS.md) §2。
+
+信息边界：HimNet / ST-SSDL 的 decoder 需要**未来** tod/dow。这两个通道由 `future_calendar` 从历史日历确定性外推（周期 288 / 7），**绝不读 target**；teacher forcing 一律关闭。HyperD 的周期表在官方代码里来自 `daily_init.npy` / `weekly_init.npy`，adapter 看不到训练集，因此零初始化并提供 `set_periodic_prior(daily, weekly)` 注入口。
+
+### 6.4 架构超参 `backbone.params`
+
+- `config.BACKBONE_PARAM_DEFAULTS` 给出每架构的**官方 PEMS08 默认值**白名单；`backbone.params` 只接受本架构的键。
+- 跨架构键、未知键、错类型（`bool` 不当 `int`）一律 fail-fast；不做“看起来设置了但没生效”的静默合并。
+- 不写 `params` 时取官方默认值；写一个键只覆盖该键。`schema_version` 保持 1：纯增量且每键有默认值，旧配置无需修改。
+- 每个 `configs/experiments/pems08_<backbone>.yaml` 显式写全默认值，并由测试断言与 `BACKBONE_PARAM_DEFAULTS` 一致，防止以后改默认值悄悄改掉已记录的实验。
 
 ## 7. 模型数学定义与默认结构
 
@@ -275,6 +304,19 @@ W_out 默认 N(0,1e-3) 小随机初始化，基础输出变化应小但非严格
 
 Router 输入固定候选模型的 `h_global.detach()`，使路由损失只更新 Router。推理取 argmax，平局选最小索引。随机对照独立 RNG，不改变模型 RNG 状态。
 
+### 7.5 MCL-WTA 对照 baseline（`--kind mcl_wta`）
+
+这是**移植**，不是 TimeMCL 官方复现：保留“独立头 + 硬 WTA + score head”，丢掉概率头、Router 与 Stage D。
+
+- 结构：K 个 `ResidualHead`（与 `independent_heads` 同构），共享 projector 与 decoder，**没有** `router` 属性。
+- 训练（Stage C）：每样本按 `argmin_k E[b,k]` 选硬赢家，`L_wta` 只用赢家的误差；loser 得到零梯度，不做 soft weighting。
+- score head：`ScoreHead(h_global, pred_z)` → `[B,K]` logits，用交叉熵拟合 **detach 后的赢家**，权重 `loss.wta_score`（默认 0.1）。它和头一起在 Stage C 训练，并且就是部署时的选择器。
+- `predict_top1` 用 score head 的 `argmax`；`CandidateOutput.candidate_logits` 承载这些 logits，其它 adapter 留 `None`。
+- `set_stage("D")` 直接报错；CLI 的 `train-router` 在读 checkpoint 后、身份校验前拒绝；`evaluate` / `profile` 不找 Router checkpoint，`set_stage("C")`，并在文档里写 `selector: "score_head"`，表格行名为 `<method>_score_top1`（metric 仍是 `raw_mae_all`）。
+- `supports_separation = False`：separation 项与硬 WTA 的语义冲突，不能静默叠加。
+
+**为什么不是 TimeMCL**：TimeMCL 的选择机制与训练日程不同（概率头 + 额外阶段）。这里只借用“硬赢家 + 独立头 + 打分器”的思想作为对照；论文中必须写明差异，不得引用其官方数字作等价比较。
+
 ## 8. 误差与一致性代价
 
 M_b 为目标有效 mask；按每样本有效元素数规约，得到 `[B,K]`。记 raw 预测 yhat，训练标量 std 为 s。
@@ -329,12 +371,27 @@ beta 最大 .01，前 10% 最大 epoch 线性升到 .01，10%–50% 固定，50%
 
 K=1 不训练 Router，返回 logits=0/index=0。所有 route targets/cost/hidden detach；路由训练 optimizer 仅包含 Router 参数。
 
-| loss | backbone | projector | actions | decoder | router |
-|---|---|---|---|---|---|
-| candidate（Frozen） | 否 | 是 | 是 | 是 | 否 |
-| separation | 否 | 是 | 是 | 否 | 否 |
-| KL/regret/balance 主设置 | 否 | 否 | 否 | 否 | 是 |
-| Full candidate 扩展 | 是 | 是 | 是 | 是 | 否 |
+### 9.4 WTA loss（仅 mcl_wta 使用）
+
+```text
+k* = argmin_k E[b,k]                          # 硬赢家，逐样本
+L_wta   = mean_valid_b( E[b, k*] )            # 只对赢家回传
+L_score = mean_valid_b( CE(logits[b], k*) )   # 目标是 detach 的 k*
+L_mcl   = L_wta + wta_score * L_score         # 默认 wta_score = 0.1
+```
+
+- `wta_loss(error[B,K], valid[B])`：形状/设备校验与既有 loss 一致；全无效 batch 返回 0 且 `count=0`，不做 optimizer step。
+- `wta_score_loss(logits[B,K], error[B,K], valid[B])`：`error` 内部 detach，梯度只进 logits；两参数 `K` 必须一致，否则报错。
+- 与 §9.2 的区别：这里对候选维做 `argmin` **选择**，不是 `w_tilde` 软加权；不要把它当作 candidate loss 的一个 epsilon 变体。
+- K=1 时 `wta_loss` 退化为普通 MSE，但 CLI 仍拒绝（WTA 需要至少一个 loser），见 §7.5。
+
+| loss | backbone | projector | actions | decoder | score head | router |
+|---|---|---|---|---|---|---|
+| candidate（Frozen） | 否 | 是 | 是 | 是 | 否 | 否 |
+| separation | 否 | 是 | 是 | 否 | 否 | 否 |
+| KL/regret/balance 主设置 | 否 | 否 | 否 | 否 | 否 | 是 |
+| wta（mcl_wta） | 否 | 是 | 是 | 是 | 是（仅 L_score） | 不存在 |
+| Full candidate 扩展 | 是 | 是 | 是 | 是 | 否 | 否 |
 
 “每个共享 decoder 参数都有非零梯度”不是 loser floor 的正确测试。应直接对独立人工候选张量验证有非零误差时各候选获得正确方向梯度，并测试真实模型累计多个 step 后参数更新。
 
@@ -348,6 +405,8 @@ K=1 不训练 Router，返回 logits=0/index=0。所有 route targets/cost/hidde
 | P probe | probe classifier/regressor | 专门时间切分的固定候选 | 仅训练内留出集；见实验文档 |
 | D router | router | C best 全部冻结 | Router@1 raw MAE |
 | E joint（可选） | 指定模块 | C/D best | Router@1 raw MAE |
+
+`mcl_wta` 不进入 Stage D：它的 score head 在 Stage C 与头联合训练并直接部署（§7.5）。`train-router` 对它 fail-fast，`evaluate` 把选择器记为 `score_head`。
 
 Stage B 不是 Stage C 的权重 warm-start，避免 K=1 对称初始化造成分支一致。B 与 C 从同一个 Base checkpoint 开始，公平记录各自预算。E 不属于默认方法；要实现时另写梯度 ADR，特别说明共享 projector 是否接收路由梯度。
 
@@ -380,6 +439,8 @@ def predict_top1(inp, graph):
 ```
 
 上层 evaluate 显式调用 model.eval 和 inference_mode。结构路径里不读取 TargetBatch。Top1 和离线 oracle 的入口、日志、表格列名分开。主指标使用未裁剪预测；非负裁剪可以另列 postprocess 版本，必须对所有方法一致应用。
+
+`mcl_wta` 的 `predict_top1` 用 `candidate_logits.argmax(-1)`（score head）替代 `router(h_global)`，其余路径相同；`Top1Output.logits` 即这些分数。Runner 仍把它写在 `router` 键下（指标与 schema 不变），CLI 额外写 `selector: "score_head"`，表格行名用 `<method>_score_top1`，避免被读成 Stage-D Router 结果。
 
 ## 12. 指标与 oracle 的无歧义定义
 
@@ -440,6 +501,13 @@ OOM/NaN/Inf 立即把 run 标为 failed 并保存诊断，不自动减 batch 或
 
 配置/输出 schema 升级必须增加版本号；旧 checkpoint 迁移不能默认 strict=False 加载。每个模块要有类型注解和关于轴/尺度的 docstring，不要求机械地为简单 getter 写测试。
 
+本轮新增的两个键是**可选且有默认值**的，因此 `schema_version` 保持 1（判断依据：不改既有键语义，旧配置无需修改）：
+
+- `backbone.params`：逐架构超参白名单，见 §6.4。未知键/跨架构键/错类型 fail-fast。
+- `loss.wta_score`：`mcl_wta` 的 score-head 交叉熵权重，默认 0.1，`>=0`。其它方法忽略。
+
+`backbone.input_dim` 的默认值从 1 改为 3（§6.1）。它进入 `backbone_identity_hash`，所以改动后旧 Base checkpoint 不能复用，必须重训——这是有意的行为，不是回归。
+
 ## 15. 性能预算与实现细节
 
 候选输出内存为 B*K*T*N*4 bytes（fp32 单通道），并非全部训练显存；主要激活可能是 B*K*T*N*D_r。实现优先先将每 hop S_r 线性映射为单通道再与 pi 融合，因为 W_out 线性且无 bias，数学等价，避免巨大 D_r 中间张量。
@@ -447,5 +515,22 @@ OOM/NaN/Inf 立即把 run 标为 failed 并保存诊断，不自动减 batch 或
 selected 路径不得产生带 K 的高维时间节点张量；允许 `[B,K,5]`、`[B,K]`。candidate chunking 可选，必须保证与完整 K 的归一化、soft target 和梯度等价，不能逐 chunk 分别计算 softmax。
 
 v1 默认 fp32；完成数值对照后可锁定 bf16 autocast，sparse ops、oracle、loss reductions 仍 fp32。不同方法性能比较 precision/TF32 设置完全一致。不能声称 A100 80GB 必然可容纳指定 batch，先 profile PEMS07。
+
+## 16. 九个 backbone 的验证状态（2026-10-29）
+
+| 检查 | 状态 |
+|---|---|
+| 不可变 commit + 被提取文件 SHA256 | 九个完成（`third_party/source_manifest.json`，schema 2，28 个文件） |
+| 许可证 | 5 个已核验（MIT ×4、Apache-2.0 ×1）；D2STGNN / HimNet / STAEformer / HyperD **无 LICENSE**，pending |
+| 补丁与偏离清单 | 九个全部记录（`third_party/BACKBONE_CONTRACTS.md` §2） |
+| 输入通道与图方向 | 九个全部显式声明（§6.3） |
+| CPU 前向/反向 × 三种 mode | 九个通过：27 组契约 + 梯度覆盖 + 死参数白名单 |
+| 图依赖断言 | 5 个真正读图的模型通过；4 个自适应图/无图模型不断言 |
+| PEMS08 规模（N=170）CPU 实构建 + 前向 | 九个通过（参数量 0.12M–13.65M），只是可行性检查 |
+| **原生 vs adapter 逐元素等价** | **未做**（无官方 checkpoint，无相同权重可比） |
+| GPU smoke / bf16 | **未做** |
+| 真实数据训练与指标 | **未做** |
+
+**不能声称**：九个 adapter 与官方实现数值等价；任一 backbone 在 PEMS08 上有效或更强；参数量差异代表性能；四个无 LICENSE 仓库可再发布。
 
 完整测试与最终完成标准见 [审查文档](README_REVIEW.md)。

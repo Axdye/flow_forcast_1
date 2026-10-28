@@ -1,6 +1,6 @@
 # 计划外工作记录
 
-日期：2026-10-28。
+日期：2026-10-28；2026-10-29 追加 §12（九个官方 backbone 与 MCL-WTA baseline）。
 
 本文件记录**已经实现、但不在原计划明确要求范围内**的工作，避免这些改动在交接时被误认为设计合同的一部分，也避免后来者重复踩坑。
 
@@ -25,13 +25,22 @@
 | X6 | `derived_binary_undirected` 拓扑标签 | 只允许 published 二值图 | `src/sbona/data/graph.py`、`config.py` | 单测：同扩散、不同 `graph_hash` |
 | X7 | `data.unit` 与 `metric_units(unit)` | 只要求 manifest 记单位 | `config.py`、`evaluation/runner.py`、`cli.py` | 单测；prepared manifest 与 `metric_units` 均为 mph |
 | X8 | `data/<NAME>/SOURCE.json` 与 `reviews/DATA_PROVENANCE.md` | 只要求记录来源 | `data/*/SOURCE.json`、`reviews/DATA_PROVENANCE.md` | 文件 hash 与上游下载比对 |
-| X9 | 额外测试 `test_calendar.py`、`test_units_topology.py` | 未规定 | `tests/unit/` | 当前 89 passed, 8 skipped |
+| X9 | 额外测试 `test_calendar.py`、`test_units_topology.py` | 未规定 | `tests/unit/` | 当前 158 passed, 8 skipped |
 | X10 | `scripts/fetch_data.py` + `provenance/raw_sources.json` | 只要求“记录来源”，未要求可下载/可校验 | `scripts/fetch_data.py`、`provenance/raw_sources.json` | 全量下载六个数据集并逐字节校验 |
 | X11 | `scripts/import_raw.py`（上游格式 → prepare 布局） | 未规定 | `scripts/import_raw.py` | 六数据集导入并与审计 hash 对齐 |
 | X12 | `tests/data/golden_prepared.json` + `test_raw_import_golden.py` | 未规定 | `tests/data/`、`tests/integration/` | 7 passed（真实上游文件） |
-| X13 | 单 seed 化 + split 列 + 身份哈希选 run | 原计划要求 ≥3 seeds、mean±std | `src/sbona/cli.py`、`training/trainer.py`、`evaluation/artifacts.py`、`tests/unit/test_run_selection.py` | 89 passed；4 类“拿错 checkpoint / 算错结果”缺陷已复现并修复 |
+| X13 | 单 seed 化 + split 列 + 身份哈希选 run | 原计划要求 ≥3 seeds、mean±std | `src/sbona/cli.py`、`training/trainer.py`、`evaluation/artifacts.py`、`tests/unit/test_run_selection.py` | 当时 89 passed；4 类“拿错 checkpoint / 算错结果”缺陷已复现并修复 |
+| X14 | `backbone.params`：逐架构超参白名单 + 官方 PEMS08 默认值 | 合同只固定 STAEformer 的扁平字段 | `src/sbona/config.py`、`tests/unit/test_config.py` | 21 项 config 测试；未知键/跨架构键/错类型均 fail-fast |
+| X15 | STAEformer `input_dim` 1→3，并修正 weekday embedding 索引 | 旧实现强制 `input_dim=1` | `src/sbona/config.py`、`backbones/staeformer.py`、全部 `configs/**/*.yaml` | 单测覆盖 1/3 与拒绝 2；九配置均可构造 |
+| X16 | 八个官方 backbone 接入（Graph WaveNet、AGCRN、STID、D2STGNN、PDFormer、HimNet、ST-SSDL、HyperD） | 只要求 STAEformer 主线 | `src/sbona/backbones/*.py`、`backbones/common.py` | `tests/unit/test_backbones.py` 45 项：九模型 × 三 mode + 梯度 + 图依赖 |
+| X17 | 统一的日历通道 / 稠密图转换与缓存 / 未来日历外推 | 合同未规定传参约定 | `src/sbona/backbones/common.py` | 由 X16 间接覆盖；每模型显式声明 `FEATURE_SPECS` |
+| X18 | MCL-WTA baseline（独立头 + 硬 WTA + score head）+ `wta_loss` / `wta_score_loss` + `CandidateOutput.candidate_logits` | 合同无 WTA baseline | `baselines/mcl_wta.py`、`objectives/losses.py`、`contracts.py`、`training/trainer.py`、`cli.py` | `test_baselines.py` 8 项 + objectives 6 项 + CLI 端到端 1 项 |
+| X19 | 逐 backbone PEMS08 实验配置 + `pems08_mcl_wta.yaml` | 只要求 STAEformer 配置 | `configs/experiments/pems08_*.yaml` | `test_every_backbone_has_a_pems08_experiment_config`；N=170 CPU 实构建全部通过 |
+| X20 | `source_manifest.json` schema 2：九仓库 commit/许可/文件哈希 | 只有 STAEformer 一项 | `third_party/source_manifest.json`、`LOCK.md`、`BACKBONE_CONTRACTS.md` | 9 模型 28 文件 sha256；4 个仓库无 LICENSE 记为 pending |
+| X21 | `scripts/smoke_backbones.py` 九模型 × 三 mode 前向诊断 | 未规定 | `scripts/smoke_backbones.py` | 27 行 `ok`；不是测试，不替代 pytest |
 | F1 | `.gitignore` 误伤 `src/sbona/data/` | —（缺陷） | `.gitignore` | 修复后源码包进入版本控制 |
 | F2 | `.gitignore` 补 `/raw/` | —（配套） | `.gitignore` | 原始下载目录不入库 |
+| F3 | HyperD 周期表零初始化导致 `linear1` 无梯度 | —（缺陷） | `backbones/hyperd.py`、`tests/unit/test_backbones.py` | `set_periodic_prior` 注入后梯度恢复，单测断言 |
 
 ## 2. 数据与日历
 
@@ -323,11 +332,13 @@ SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -
 当前总结果：
 
 ```text
-pytest -q  -> 89 passed, 8 skipped
+pytest -q  -> 158 passed, 8 skipped
               (8 = GPU smoke 无 CUDA + 7 个 opt-in 原始数据 golden 测试)
 SBONA_RAW_DIR=raw pytest tests/integration/test_raw_import_golden.py -q -> 7 passed
 ruff check src tests scripts -> All checks passed
 ```
+
+测试环境（本轮）：`/opt/miniconda3/envs/pytorch` 的 torch 2.2.2，叠加一个 numpy 1.26.4 overlay（该 env 自带的 numpy 2.3.3 与 torch 2.2.2 的 `torch.from_numpy` ABI 冲突）。命令见 `reviews/STATUS.md`。这只是让 CPU 测试能跑，不构成可复现环境。
 
 ## 7. 顺带修复：`.gitignore` 误伤源码包
 
@@ -358,13 +369,21 @@ ruff check src tests scripts -> All checks passed
    已做周末/工作日一致性检查，但这只是交叉检查。拿到原始时间戳后应替换并重跑。
 4. **`derived_binary_undirected` 是派生拓扑。**
    它不声称等价于发布方原始加权/有向图；论文表格必须同时报告拓扑标签与转换规则。
+5. **STAEformer 的 weekday embedding 索引与官方不同。**
+   官方（BasicTS v0.5.8）把 `dow/7` 分数直接 `.long()`，对任何一天都截断到 0，等于永远索引星期 0。本仓保留官方“分数进入输入投影”的做法（`input_dim=3`），但 embedding 用 `round(dow*7)` 取整数索引。这是**修正**，不是扩展；论文必须披露。
+6. **PDFormer 的 `sem_mask` 被禁用。** DTW 聚类先验需要完整训练序列，契约不提供；语义头退化为 dense attention，`pattern_keys` 改为可学习 per-node 参数（正弦初始化）。这不是官方配置。
+7. **HyperD 的周期表从零开始。** 官方加载 `daily_init.npy` / `weekly_init.npy`（训练集日均/周均剖面），adapter 看不到训练集；提供 `set_periodic_prior(daily, weekly)` 注入。零初始化时 `linear1` 权重无梯度（已列入允许清单），注入后恢复。
+8. **MCL-WTA 不是 TimeMCL 官方复现。** 它是“独立头 + 硬 WTA + score head”的移植：丢掉了概率头 / Router / Stage D，score head 在 Stage C 与头一起训练并直接部署。与 TimeMCL 的差异必须在论文中写明。
+9. **`input_dim` 默认值改为 3 会改变已有 checkpoint 的身份哈希。**
+   `backbone_identity_payload` 含 `asdict(cfg.backbone)`，旧 Base checkpoint 不能直接复用；必须按新配置重训。这是有意的，不是回归。
 
 ## 9. 未执行 / 不声称
 
 - GPU smoke、A100 显存/吞吐/bf16、DDP 行为：**未执行**。
 - 任何真实数据训练、Router 训练、test MAE/RMSE/MAPE：**未执行**。
 - METR-LA / PEMS-BAY：只完成数据准备与 CPU 前向，**没有训练或评测结果**。
-- STID / Graph WaveNet / AGCRN：仍 pending，配置 fail-fast，不冒充支持。
+- 九个 backbone 只完成 CPU 前向/反向与形状/梯度契约；**没有**加载官方权重做逐元素等价比较，**没有** GPU smoke，**没有**任何真实数据指标。
+- D2STGNN / HimNet / STAEformer / HyperD 上游无 LICENSE 文件：可作内部复现，**不能**声称已获再发布许可。
 - `data/` 下的原始数据：不入库（体积与许可原因），只入库来源记录与 hash。
 - 依赖 lock 文件与 CI：仍未提供。
 
@@ -392,3 +411,104 @@ python -m ruff check src tests scripts
 - 以后任何“计划没写但做了”的改动，都先在本文件加一行，再在 `reviews/STATUS.md` / `reviews/HANDOFF.md` 留链接。
 - 如果改动触及合同（信息边界、损失、尺度、图定义、checkpoint 选择、oracle 粒度），不能只写在这里，必须走设计变更并在 `docs/` 留记录。
 - 本文件不构成“已完成”的证明；完成标准仍以 `docs/README_REVIEW.md` 为准。
+
+## 12. 2026-10-29 追加：九个官方 backbone 与 MCL-WTA baseline
+
+### X16 九个 backbone 的接入口径
+
+每个模型都实现在**本仓自己的** `BackboneWrapper` 上（`encode_and_predict(ModelInput, GraphContext) -> (node_hidden [B,N,D], base_pred_z [B,T,N,1])`），BasicTS 只在核对模型定义与官方超参时作参考，**不是 runtime 依赖**。
+
+| backbone | 上游 commit | node hidden | Partial 白名单 | 是否读道路图 |
+|---|---|---|---|---|
+| staeformer | `fc49d39b` | 最后空间 attention 后最后历史步 | 最后 N 个空间层 + 输出投影 | 否（学习型 all-to-all） |
+| graph_wavenet | `6b162e80` | `end_conv_1` 之后 | `end_conv_1/2` | 是 |
+| agcrn | `7fbbf2ae` | encoder 最后一步 | `end_conv` | 否（自适应图） |
+| stid | `e8b313bc` | `regression_layer` 之前 | `encoder` + `regression_layer` | 否（无空间路径） |
+| d2stgnn | `82c2d38b` | 最后 decouple 的 forecast 输入 | `out_fc_1/2` | 是 |
+| pdformer | `f8c8f6ad` | 最后 encoder block 输出 | 最后 block + `end_conv2` | 是 |
+| himnet | `2a9aa44d` | 最后 `HimGCN` 输出 | `decoder` + `out_proj` | 否（学习支撑） |
+| stssdl | `a98331d3` | decoder 最后状态 | `decoder`/`proj`/`hypernet` | 是 |
+| hyperd | `5bd93a82` | `stfe` 的 token 表示 | `stfe.fc` + 两个周期线性层 | 是（经周期表） |
+
+逐模型的补丁、输入通道与方向约定见 `third_party/BACKBONE_CONTRACTS.md` §2；commit/许可/文件哈希见 `third_party/source_manifest.json`。
+
+**为什么算计划外**：合同只把 STAEformer 定为主线，其余架构在旧 `BACKBONE_CONTRACTS.md` 里是“待锁/待接入”。本轮把八个补齐，`PENDING` 清空。
+
+**验证**：`tests/unit/test_backbones.py`（45 项）
+
+- 九模型 × `frozen/partial/full` = 27 组形状/有限性/`requires_grad`/`node_feature_dim` 契约；
+- 全模式反向：断言“除上游确有的死参数外，每个可训练参数都拿到非零梯度”，并要求 ≥80% 张量有梯度；
+- 图依赖：只对真正消费道路图的 5 个模型断言换图会改变预测（HyperD 需先注入周期先验）；
+- 死参数白名单（`UNUSED_PARAMETER_PREFIXES`）是显式的：GWNet `residual_convs.*`/`bn.7.*`/`gconv.7.*`；D2STGNN backcast 分支与 distance function 的 time-slot embedding；HyperD 零先验下的 `linear1`。
+
+另外做了一次 **N=170（PEMS08 规模）CPU 实构建**，九个模型都能在真实配置下前向出 `[1,12,170,1]`；其中 HyperD 参数量最大（13.65M），STID 最小（0.12M）。这不是指标，只是形状与内存可行性检查。`scripts/smoke_backbones.py` 是同一检查的可重复版本（9 模型 × 3 mode，极小图）。
+
+### X14 `backbone.params` 与官方 PEMS08 默认值
+
+- `BACKBONE_PARAM_DEFAULTS` 是每架构的**官方 PEMS08 配置**白名单；`backbone.params` 只允许本架构的键。
+- 跨架构键、未知键、错类型（含 `bool` 当 `int`）全部 fail-fast，避免“写了但没生效”。
+- 不写 `params` 得到官方默认值；写一个键只覆盖该键。
+- `schema_version` 保持 1：纯增量、每键有默认值，旧配置无需改。
+- 每个 `configs/experiments/pems08_<backbone>.yaml` 都**显式写全**官方默认值，并由 `test_every_backbone_has_a_pems08_experiment_config` 断言与 `BACKBONE_PARAM_DEFAULTS` 一致，防止以后改动默认值悄悄改掉已记录的实验。
+
+### X15 STAEformer `input_dim` 与 weekday 修正
+
+旧实现强制 `input_dim=1`（只投影 flow），与官方 `nn.Linear(3, ...)` 投影 `[flow, tod, dow]` 冲突。本轮：
+
+- `validate()` 接受 `input_dim ∈ {1, 3}`，拒绝 2；dataclass 默认与全部配置改为 3。
+- `use_mixed_proj=True` 仍是硬约束。
+- `dow` 以**分数**进入输入投影（官方值），但 weekday embedding 用 `round(dow*7)` 索引：官方对分数 `.long()` 永远得 0。
+
+**影响**：`backbone_identity_payload` 包含 `asdict(cfg.backbone)`，所以旧 Base checkpoint 的身份哈希变了，必须重训。这是刻意的。
+
+### X18 MCL-WTA baseline
+
+`src/sbona/baselines/mcl_wta.py`：
+
+- `K` 个独立残差头（`ResidualHead`），与 `independent_heads` 同构但**不带 Router**；
+- 硬 WTA：`wta_loss(error, valid)` 用 `argmin` 选出每个样本的赢家，只用赢家的误差回传（loser 得到零梯度，不是软加权）；
+- score head：`ScoreHead(h_global, pred_z)` 输出 `[B,K]` 分数，用 `wta_score_loss(logits, error.detach(), valid)` 做交叉熵，权重 `loss.wta_score`（默认 0.1）；
+- `predict_top1` 用 score head 的 `argmax`，不是 Router；
+- `set_stage("D")` 直接报错：本 baseline 不训练 Stage-D Router，score head 在 Stage C 与头联合训练并直接部署；
+- `supports_separation = False`（WTA 与 separation loss 语义冲突）。
+
+配套改动：
+
+| 位置 | 改动 |
+|---|---|
+| `contracts.py` | `CandidateOutput.candidate_logits: Tensor \| None`，形状校验 `[B,K]` |
+| `objectives/losses.py` | 新增 `wta_loss`、`wta_score_loss`，形状/设备校验与既有 loss 一致 |
+| `training/trainer.py` | `_train_epoch` 按 `model.loss_kind` 分派（`weighted` / `wta`），WTA 分支加 `wta_score_loss` |
+| `baselines/__init__.py` | `ADAPTER_KINDS` 增加 `mcl_wta`；`build_adapter` 不构造 Router |
+| `cli.py` | `--kind mcl_wta`；`K>=2` 守卫；`train-router` 在身份校验**之前**拒绝；`evaluate`/`profile` 跳过 Router checkpoint、`set_stage("C")`、`selector="score_head"`、表格行用 `<method>_score_top1` |
+
+**为什么算计划外**：合同里没有 WTA baseline，也没有 `candidate_logits` 字段。这是用户明确要求的对照方法，因此单列。
+
+**验证**：`tests/unit/test_baselines.py`（8 项，含“只有赢家头拿到梯度”“score head 只由自己的交叉熵训练”“没有 Router 属性”）、`tests/unit/test_objectives.py`（6 项 WTA 数学/掩码/形状）、`tests/integration/test_cli_synthetic.py::test_cli_synthetic_mcl_wta_end_to_end`（训练 → `train-router` 必须失败 → evaluate 产出 `_score_top1` 行）。
+
+### X17 `backbones/common.py`
+
+三块共享胶水，**只**做这三件事：
+
+1. **日历通道**：`FEATURE_SPECS`（`flow / tod / dow_index / dow_fraction / dow_onehot`）+ `stack_features`。每个 adapter 自己声明要哪几路，不共享“默认约定”——传错不会报错，只会学错 embedding。
+2. **稠密图转换与缓存**：`GraphContext` 存的是稀疏行归一化算子，上游要稠密 `[N,N]` 邻接/跳数/拉普拉斯特征向量；`GraphCache` 按 `(graph_hash, device)` 缓存，并显式处理方向（`A` vs `A.T`）。
+3. **`future_calendar` 与 `TorchBackboneAdapter`**：前者给 HimNet / ST-SSDL 外推**未来 tod/dow**（确定性日历，绝不读 target）；后者做形状/节点对齐检查后委派给 `forward_features`，保证 hidden 与 prediction 来自**一次** forward。
+
+### X19 实验配置
+
+新增 `configs/experiments/pems08_{graph_wavenet,agcrn,stid,d2stgnn,pdformer,himnet,stssdl,hyperd}.yaml` 与 `pems08_mcl_wta.yaml`。每个文件头注释列出该模型相对官方的偏差；`pems08_mcl_wta.yaml` 的 `method_id: sbona`，配合 `--kind mcl_wta` 落成 `sbona_mcl_wta`，不会与 structured candidates 混淆。
+
+### X20 来源登记
+
+`third_party/source_manifest.json` 升到 schema 2：九个仓库的 `repository/commit/license/files[{path,sha256,bytes}]/patches/input_features/validation`。`validation.native_equivalence` 与 `gpu_smoke` 全部为 `false`，这是事实而不是遗漏。
+
+- 5 个仓库有 MIT / Apache-2.0 LICENSE（Graph WaveNet、AGCRN、STID、PDFormer、ST-SSDL）。
+- 4 个仓库**没有** LICENSE / COPYING（D2STGNN、HimNet、STAEformer、HyperD）：本仓不 vendor 其源码，但仍属衍生重写，`pending` 状态不解除。
+- BasicTS pin 到 `63fa7192…`（v0.5.8）并注明“仅参考、非 runtime 依赖”：更晚的版本不含这些模型。
+
+### 本轮的“不能声称”
+
+- 不能声称与官方实现**数值等价**：没有官方 checkpoint，因此没有逐元素比较。
+- 不能声称任一 backbone 在 PEMS08 上有效：没有任何真实数据训练或指标。
+- 不能声称 GPU / bf16 可用：只跑了 CPU。
+- 不能声称 4 个无 LICENSE 仓库可再发布。

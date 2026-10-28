@@ -37,6 +37,8 @@ from sbona.objectives.losses import (
     candidate_loss,
     router_loss,
     separation_loss,
+    wta_loss,
+    wta_score_loss,
 )
 from sbona.objectives.oracle import OracleSettings, build_oracle
 from sbona.training.checkpoint import (
@@ -490,20 +492,37 @@ class CandidateTrainer:
             with autocast_context(self.cfg, self.device):
                 out = self.model.forward_candidates(inp, self.graph)
                 oracle = build_oracle(out, target, self.stats, self.graph, self.settings)
-                loss, count = candidate_loss(
-                    oracle,
-                    epsilon=self.cfg.loss.epsilon_floor,
-                    lambda_consistency=self.cfg.loss.consistency,
-                )
-                sep_value = 0.0
-                if count > 0 and getattr(self.model, "supports_separation", True):
-                    sep, _ = separation_loss(
-                        out.actions.normalized,
-                        oracle.valid_sample,
-                        margin=self.cfg.loss.separation_margin,
+                loss_kind = getattr(self.model, "loss_kind", "weighted")
+                if loss_kind == "wta":
+                    loss, count = wta_loss(oracle.error, oracle.valid_sample)
+                    if count > 0 and getattr(self.model, "uses_score_selector", False):
+                        if out.candidate_logits is None:
+                            raise RuntimeError(
+                                "MCL-WTA model did not return candidate_logits; the "
+                                "score head cannot be trained"
+                            )
+                        score, _ = wta_score_loss(
+                            out.candidate_logits, oracle.error, oracle.valid_sample
+                        )
+                        loss = loss + self.cfg.loss.wta_score * score
+                    sep_value = 0.0
+                elif loss_kind == "weighted":
+                    loss, count = candidate_loss(
+                        oracle,
+                        epsilon=self.cfg.loss.epsilon_floor,
+                        lambda_consistency=self.cfg.loss.consistency,
                     )
-                    loss = loss + self.cfg.loss.separation * sep
-                    sep_value = float(sep.detach())
+                    sep_value = 0.0
+                    if count > 0 and getattr(self.model, "supports_separation", True):
+                        sep, _ = separation_loss(
+                            out.actions.normalized,
+                            oracle.valid_sample,
+                            margin=self.cfg.loss.separation_margin,
+                        )
+                        loss = loss + self.cfg.loss.separation * sep
+                        sep_value = float(sep.detach())
+                else:
+                    raise RuntimeError(f"unknown candidate loss kind {loss_kind!r}")
             if count == 0:
                 continue
             loss.backward()

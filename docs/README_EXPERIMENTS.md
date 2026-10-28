@@ -107,6 +107,8 @@ G1 阶段可用训练子集 debug；G2 起的数据子集/完整数据必须独�
 
 至少三个 backbone 才支持相应迁移主张；如果只有单卡且周期有限，先 STAEformer+STID+Graph WaveNet，再 AGCRN。宁可缩小结论范围，也不压成所有结果单 seed。
 
+**当前实现进度（2026-10-29）**：九个官方 backbone（STAEformer、Graph WaveNet、AGCRN、STID、D2STGNN、PDFormer、HimNet、ST-SSDL、HyperD）都已实现在同一 `BackboneWrapper` 合同上，并各有 `configs/experiments/pems08_<backbone>.yaml`（官方 PEMS08 超参显式写全）。这只是**代码可用**，不是上述矩阵已完成：没有任何真实数据训练、没有指标、没有 seed 间方差。加入后四个架构也不改变本节的 10 单元主表——主表仍按预算预先固定，扩展单元须另行登记。
+
 ## 7. K 扩展曲线的区别
 
 **Nested-K**：固定一个 Kmax=16 模型和预登记 anchor 顺序，使用前 1/2/4/8/16 个候选；对 raw MAE 最小选择的 oracle 误差必不增加。不能把这一数学必然性本身当作方法有效性证据，应看相同预算对照及增益大小。

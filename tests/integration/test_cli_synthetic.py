@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from sbona.cli import main
+from sbona.training.checkpoint import load_checkpoint
 
 
 def _config() -> dict:
@@ -105,3 +106,60 @@ def test_cli_synthetic_end_to_end(tmp_path: Path) -> None:
     # Evaluation must not overwrite the source training run.
     assert (output_root / "candidates" / "metrics.json").is_file()
     assert (output_root / "experiments.csv").is_file()
+
+
+@pytest.mark.slow
+def test_cli_synthetic_mcl_wta_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The WTA baseline must train, evaluate and refuse a Stage-D Router."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(_config(), sort_keys=False), encoding="utf-8")
+    data_root = tmp_path / "data"
+    output_root = tmp_path / "outputs"
+    roots = [
+        "--data-root",
+        str(data_root),
+        "--output-root",
+        str(output_root),
+        "--synthetic",
+        "--device",
+        "cpu",
+    ]
+    common = ["--config", str(config_path), *roots]
+
+    assert main(["prepare-data", *common]) == 0
+    assert main(["train-base", *common, "--run-id", "base"]) == 0
+    assert (
+        main(
+            [
+                "train-candidates",
+                *common,
+                "--run-id",
+                "mcl",
+                "--kind",
+                "mcl_wta",
+            ]
+        )
+        == 0
+    )
+    candidate_run = output_root / "mcl"
+    assert (candidate_run / "checkpoint_best.pt").is_file()
+    payload = load_checkpoint(candidate_run / "checkpoint_best.pt", map_location="cpu")
+    assert payload["model_kind"] == "mcl_wta"
+
+    # There is no Stage-D Router for this method.
+    assert main(["train-router", *common, "--candidate-run", "mcl", "--run-id", "router"]) == 1
+    assert "no Stage-D Router" in capsys.readouterr().err
+
+    # Evaluation prefers the run's resolved config (which carries the
+    # ``_mcl_wta`` method id), so no ``--config`` is passed here.
+    assert main(["evaluate", *roots, "--run", "mcl", "--split", "test"]) == 0
+    eval_dir = output_root / "mcl-eval-test"
+    assert (eval_dir / "metrics.json").is_file()
+    metrics = yaml.safe_load((eval_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["selector"] == "score_head"
+    assert metrics["adapter_kind"] == "mcl_wta"
+    assert metrics["counts"]["router_available"] is True
+
+    rows = (output_root / "experiments.csv").read_text(encoding="utf-8")
+    assert "_score_top1" in rows
+    assert "_router" not in rows

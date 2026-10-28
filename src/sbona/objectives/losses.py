@@ -141,8 +141,44 @@ def router_loss(
     )
 
 
-def beta_schedule(
-    epoch: int,
+def wta_loss(error: Tensor, valid: Tensor) -> tuple[Tensor, int]:
+    """Winner-takes-all loss: ``mean_valid(min_k error)`` with hard routing.
+
+    Gradient reaches **only** the winning head of each sample, which is the
+    defining property of a WTA objective: the loser heads get no signal for
+    that sample, so they specialise on the samples they win.  ``error`` is the
+    per-candidate loss already retained with autograd (SBoN uses the z-space
+    masked MSE from :class:`~sbona.contracts.OracleOutput`).
+    """
+    if error.dim() != 2:
+        raise LossError(f"error must be [B, K], got {tuple(error.shape)}")
+    if error.shape[1] < 1:
+        raise LossError("wta_loss needs at least one candidate")
+    _, best_index = error.min(dim=-1)
+    # ``gather`` keeps the graph through the winner only; a plain ``min`` would
+    # route gradient to every tied candidate.
+    winner = error.gather(1, best_index[:, None]).squeeze(1)
+    return mean_over_valid(winner, valid)
+
+
+def wta_score_loss(
+    logits: Tensor,
+    error: Tensor,
+    valid: Tensor,
+) -> tuple[Tensor, int]:
+    """Cross-entropy of the score head against the detached WTA winner."""
+    if logits.dim() != 2:
+        raise LossError(f"logits must be [B, K], got {tuple(logits.shape)}")
+    if logits.shape != error.shape:
+        raise LossError("logits and per-candidate errors must share [B, K]")
+    target = error.detach().argmin(dim=-1)
+    per_sample = torch.nn.functional.cross_entropy(
+        logits.float(), target, reduction="none"
+    )
+    return mean_over_valid(per_sample, valid)
+
+
+def beta_schedule(    epoch: int,
     max_epochs: int,
     max_beta: float = 0.01,
     final_beta: float = 0.002,
@@ -185,4 +221,6 @@ __all__ = [
     "router_loss",
     "beta_schedule",
     "base_mse_loss",
+    "wta_loss",
+    "wta_score_loss",
 ]

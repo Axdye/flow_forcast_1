@@ -107,7 +107,7 @@ class STAEformer(nn.Module):
         in_steps: int = 12,
         out_steps: int = 12,
         steps_per_day: int = 288,
-        input_dim: int = 1,
+        input_dim: int = 3,
         output_dim: int = 1,
         input_embedding_dim: int = 24,
         tod_embedding_dim: int = 24,
@@ -190,9 +190,17 @@ class STAEformer(nn.Module):
         x = self.input_proj(x)
         features = [x]
         if self.tod_embedding_dim > 0:
-            features.append(self.tod_embedding((tod * self.steps_per_day).long()))
+            features.append(self.tod_embedding((
+                tod.clamp(0.0, 1.0) * self.steps_per_day
+            ).long().clamp_max(self.steps_per_day - 1)))
         if self.dow_embedding_dim > 0:
-            features.append(self.dow_embedding(dow.long()))
+            # Official BasicTS passes ``dow / 7`` to the model.  Its own
+            # ``dow_embedding(dow.long())`` truncates that fraction to 0 for
+            # every weekday; we keep the official *fraction* channel in the
+            # input projection but index the embedding with the weekday, which
+            # is what the paper intends.
+            weekday = (dow.clamp(0.0, 1.0) * 7.0).round().long().clamp(0, 6)
+            features.append(self.dow_embedding(weekday))
         if self.spatial_embedding_dim > 0:
             features.append(
                 self.node_emb.expand(batch_size, self.in_steps, *self.node_emb.shape)
@@ -280,7 +288,12 @@ class STAEformerAdapter(BackboneWrapper):
             )
         batch_size, length, nodes, _ = inp.history.shape
         tod = inp.time_of_day[:, :, None, None].expand(batch_size, length, nodes, 1)
-        dow = inp.day_of_week.float()[:, :, None, None].expand(batch_size, length, nodes, 1)
+        # Official BasicTS supplies weekday as a fraction ``dow / 7``; the model
+        # recovers the integer index for its embedding.
+        dow = (
+            inp.day_of_week.float()[:, :, None, None].expand(batch_size, length, nodes, 1)
+            / 7.0
+        )
         if self.model.dow_embedding_dim > 0:
             if bool((inp.day_of_week < 0).any()) or bool((inp.day_of_week > 6).any()):
                 raise ValueError("day_of_week must be in 0..6 when the weekday embedding is enabled")

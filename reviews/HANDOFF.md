@@ -1,6 +1,6 @@
 # v1 实现交接说明
 
-日期：2026-10-28。
+日期：2026-10-28；2026-10-29 追加 §4.3（九个 backbone + MCL-WTA baseline）。
 对应设计合同：`docs/README_CODE_DESIGN.md`（最高优先级）。
 当前等级：**D0**；代码已实现，验证未达到 D1。计划外实现与已知偏离见 `reviews/EXTRA_WORK.md`。
 
@@ -11,14 +11,14 @@
 | 合同 | `src/sbona/contracts.py` | `ModelInput` / `TargetBatch` / `GraphContext` / 输出与 scaler 数据类；形状、dtype、设备检查 |
 | 配置 | `src/sbona/config.py` | 严格 YAML schema，未知 key fail-fast；跨段校验；CLI > env > config > 默认根目录 |
 | 数据 | `src/sbona/data/` | PEMS08 `.npz` / 合成数据、无泄漏窗口、train-only scaler、二值无向图与行归一化稀疏扩散 |
-| Backbone | `src/sbona/backbones/` | STAEformer v1（按本地 pristine commit 重实现，未直接 vendor）；STID / Graph WaveNet / AGCRN 明确 pending |
+| Backbone | `src/sbona/backbones/` | 九个官方架构按 pinned commit 重实现（未 vendor 源码）：STAEformer、Graph WaveNet、AGCRN、STID、D2STGNN、PDFormer、HimNet、ST-SSDL、HyperD；`common.py` 提供日历通道、稠密图转换/缓存、未来日历外推与 adapter shell |
 | 模型 | `src/sbona/models/` | 动作生成、Sobol anchor、结构化共享残差解码、Router、`SBoN.forward_candidates` / `predict_top1` |
 | 目标 | `src/sbona/objectives/` | 候选 cost、consistency 约束、soft target、candidate/router/separation loss |
 | 训练 | `src/sbona/training/` | Stage A/B/C/D、F/R/Q probe、checkpoint/resume、hash 校验、真实 optimizer step 计数 |
 | 评测 | `src/sbona/evaluation/` | 流式指标、三种 oracle、regime、多样性、bootstrap、run artifacts、profiling、aggregation |
-| Baselines | `src/sbona/baselines/` | single、independent heads、unstructured、perturbation；`build_adapter` |
-| CLI | `src/sbona/cli.py` | `prepare-data`、`train-base`、`train-single`、`train-candidates`、`train-router`、`probe-route`、`evaluate`、`profile`、`aggregate` |
-| 配置样例 | `configs/experiments/` | PEMS08 base/single/K8/probe 与 synthetic smoke |
+| Baselines | `src/sbona/baselines/` | single、independent heads、unstructured、perturbation、`mcl_wta`（独立头 + 硬 WTA + score head）；`build_adapter` |
+| CLI | `src/sbona/cli.py` | `prepare-data`、`train-base`、`train-single`、`train-candidates`（`--kind` 含 `mcl_wta`）、`train-router`、`probe-route`、`evaluate`、`profile`、`aggregate` |
+| 配置样例 | `configs/experiments/` | PEMS08 base/single/K8/probe、九个 backbone 各一份 `pems08_<backbone>.yaml`、`pems08_mcl_wta.yaml` 与 synthetic smoke |
 
 ### 关键合同落实
 
@@ -46,9 +46,13 @@
 
 ```bash
 cd /Users/ljw/Documents/code/SBoN-Adapter
-python -m pytest -q
-# 89 passed, 8 skipped
+PYTHONPATH="src:$TMPDIR/np126/extracted/lib/python3.11/site-packages:/opt/miniconda3/envs/pytorch/lib/python3.11/site-packages" \
+  /opt/miniconda3/bin/python -m pytest tests -q
+# 158 passed, 8 skipped
 # skipped: GPU smoke (no CUDA) + 7 opt-in raw-import golden tests
+
+PYTHONPATH=... /opt/miniconda3/bin/python scripts/smoke_backbones.py
+# 27 行 ok（9 模型 × frozen/partial/full）
 
 SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
 # 7 passed
@@ -114,7 +118,8 @@ python -m sbona.cli prepare-data \
 
 - **GPU smoke 未执行**：当前机器无 CUDA；不能声称 A100 显存、吞吐、bf16 或 DDP 行为。
 - **真实数据训练未执行**：没有任何真实数据集的 checkpoint、真实 MAE、Router 收益或 oracle 分析。
-- **STID / Graph WaveNet / AGCRN 未实现**：缺 pinned commit/许可证/等价验证，配置会 fail-fast，不冒充支持。
+- **九个 backbone 都没有官方权重等价测试**：只验证了形状、有限性、梯度路径与图依赖；`native_equivalence` 与 `gpu_smoke` 在 `source_manifest.json` 里都是 `false`。
+- **四个上游仓库无 LICENSE**：D2STGNN / HimNet / STAEformer / HyperD，不能声称可再发布。
 - **依赖 lock 与 CI 未提供**：`pyproject.toml` 有依赖声明，但无锁文件/CI workflow。
 - **日历来源是数据自带 tod/dow 通道 + 有记录的起始星期**：`scripts/build_calendar.py` 的通道模式保留原始 tod（包括 PEMS-BAY 的 1 小时缺口），只施加常量星期相位偏移；均匀模式则从记录在案的起始时间生成。两种模式都用周末/工作日比值做一致性检查，但不是发布方原始时间戳证明。若拿到原始时间戳应替换 `data/<NAME>/calendar.npz` 并重跑 `prepare-data`。
 - **METR-LA / PEMS-BAY 已接入配置但未训练**：`derived_binary_undirected` 与 `speed (mph)` 协议已实现，`prepare-data` 与 CPU 前向通过；没有 checkpoint 或指标，不能声称可复现论文结果。
@@ -143,13 +148,25 @@ python -m sbona.cli prepare-data \
 
 验证：`pytest -q` → 89 passed, 8 skipped（新增 `tests/unit/test_run_selection.py` 8 项与 `test_artifacts.py` 聚合测试）；独立脚本 `scripts/verify_selection.py` 13 项全 PASS；`ruff` 与 `compileall` 通过。仍**未**执行真实训练 / GPU smoke。
 
+## 4.3 九个 backbone 与 MCL-WTA baseline（2026-10-29 追加）
+
+细节见 `reviews/EXTRA_WORK.md` §12、`third_party/BACKBONE_CONTRACTS.md`、`third_party/LOCK.md`。
+
+- **九个官方 backbone** 都实现在本仓 `BackboneWrapper` 上（BasicTS 仅用于核对定义与超参，不是 runtime 依赖）。commit 与文件 SHA256 见 `third_party/source_manifest.json`（schema 2，9 仓库 / 28 文件）。
+- **`backbone.params`**：逐架构超参白名单 + 官方 PEMS08 默认值；跨架构键/未知键/错类型 fail-fast；`schema_version` 仍为 1（增量且有默认值）。
+- **STAEformer `input_dim` 1→3**（官方值），weekday embedding 用 `round(dow*7)` 索引（官方对分数 `.long()` 永远得 0）。因为 `input_dim` 进入 `backbone_identity_hash`，**旧 Base checkpoint 不能复用**，必须重训。
+- **MCL-WTA**（`--kind mcl_wta`）：独立头 + 硬 WTA + score head，**没有** Router 与 Stage D；`train-router` 对它 fail-fast，`evaluate` 记 `selector: score_head` 与 `<method>_score_top1` 行。它是移植，不是 TimeMCL 官方复现。
+- **实验配置**：`configs/experiments/pems08_<backbone>.yaml` × 9 与 `pems08_mcl_wta.yaml`；每份显式写全官方默认值，并被测试断言与 `BACKBONE_PARAM_DEFAULTS` 一致。
+
+验证：`pytest -q` → 158 passed, 8 skipped（新增 `test_backbones.py` 45 项、`test_baselines.py` 8 项、WTA/配置测试若干、CLI `mcl_wta` 端到端 1 项）；`scripts/smoke_backbones.py` 27 行 ok；九个模型在 N=170（PEMS08 规模）CPU 实构建 + 前向通过。仍**未**做官方权重等价、GPU smoke 或任何真实训练。
+
 ## 5. 建议下一步
 
 1. 在 A100 环境执行 `tests/gpu/test_gpu_smoke.py`，记录驱动/CUDA/显存/耗时。
 2. 补齐依赖 lock 与最小 CPU CI。
 3. 按 `docs/README_EXPERIMENTS.md` 的 Gate 顺序跑 PEMS08 Stage A → B → C → D，并保存完整 run 目录；用 PEMS04/07 做跨数据集复核。
 4. 先看 Router 是否真的优于 uniform / single；若否，按失败结果交付，不改测试集或指标。
-5. 再评估第二个 backbone；没有 pin/许可证/等价测试前不要合并。
+5. 再评估第二个 backbone：九个都已有 CPU 契约，但**没有**官方权重等价测试，正式开跑前至少补一次同权重的逐元素比较（或明确记录“无法获得官方权重”）；4 个无 LICENSE 的架构先取得许可或引用条款。
 
 ## 6. 非声明
 

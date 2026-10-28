@@ -1,7 +1,13 @@
 {
-  "schema_version": 1,
-  "date": "2026-10-28",
+  "schema_version": 2,
+  "date": "2026-10-29",
   "source_thread_id": "01a17e34-dff2-70f3-9644-bf5204feed01",
+  "notes": [
+    "Every commit below came from a fresh `git clone` followed by `git rev-parse HEAD`; no floating branch and no web snapshot.",
+    "`validation.cpu_forward` means this repository's adapter ran on CPU (tests/unit/test_backbones.py). It does not mean upstream code reproduced its paper numbers.",
+    "`validation.native_equivalence` is false for all models: no official checkpoints were available, so no elementwise native-vs-adapter comparison was performed.",
+    "The repository does not vendor upstream source: src/sbona/backbones/*.py is a re-implementation. See third_party/LOCK.md for the licence policy."
+  ],
   "local_design_sources": [
     {
       "path": "/Users/ljw/Documents/ChatGPT/毕设/新论文详细设计/01_新论文故事线.md",
@@ -19,17 +25,432 @@
       "bytes": 25413
     }
   ],
-  "staeformer": {
-    "repository": "https://github.com/XDZhelheim/STAEformer",
-    "commit": "fc49d39b2f1a8e3cf37b6289d7240680e1690f3f",
-    "file": "model/STAEformer.py",
-    "sha256": "fb2292ae1a1259131fafb16392c6b76097d16bc7fb1c36c6d3ce97ebe7be76c7",
-    "source": "local_git_object_not_dirty_worktree",
-    "runtime_verified": false
+  "reference_only": {
+    "basic_ts": {
+      "repository": "https://github.com/GestaltCogTeam/BasicTS.git",
+      "commit": "63fa7192a94c7a59519c0a891f0ad9622f3da37c",
+      "version": "v0.5.8",
+      "license": {
+        "spdx": "Apache-2.0",
+        "verified": true
+      },
+      "runtime_dependency": false,
+      "purpose": "Cross-check of instant-traffic model definitions and official PEMS08 hyper-parameters. Later BasicTS versions do not contain these models."
+    }
   },
-  "pending_commits": [
-    "Graph-WaveNet",
-    "AGCRN",
-    "STID"
-  ]
+  "models": {
+    "graph_wavenet": {
+      "repository": "https://github.com/nnzhan/Graph-WaveNet.git",
+      "commit": "6b162e80c59a1d494809252eca055cff93dc66b1",
+      "license": {
+        "path": "LICENSE",
+        "spdx": "MIT",
+        "verified": true
+      },
+      "files": [
+        {
+          "path": "model.py",
+          "sha256": "f357319260657716c18916d691d31179e2380dcb882b9c41556c9a55912f1059",
+          "bytes": 7730
+        }
+      ],
+      "adapter": "src/sbona/backbones/graph_wavenet.py",
+      "input_features": [
+        "flow_z",
+        "tod"
+      ],
+      "patches": [
+        "gate_convs: upstream declares Conv1d but feeds a 4-D [B,C,N,L] tensor; rewritten as the equivalent Conv2d (same as the BasicTS port)",
+        "graph orientation: upstream nconv is out[v]=sum_w A[v,w]x[w]; the contract operator is the transpose, so supports are (A.T, A)"
+      ],
+      "notes": "weekday channel intentionally omitted (official in_dim=2)",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "agcrn": {
+      "repository": "https://github.com/LeiBAI/AGCRN.git",
+      "commit": "7fbbf2aeb099242098a3cf482b55cd45d7295c28",
+      "license": {
+        "path": "LICENSE",
+        "spdx": "MIT",
+        "verified": true
+      },
+      "files": [
+        {
+          "path": "model/AGCRN.py",
+          "sha256": "40b6a1ef84cf0510250d0cedcd1d253e116869803cd7b8be0973733148936a80",
+          "bytes": 3529
+        },
+        {
+          "path": "model/AGCRNCell.py",
+          "sha256": "65ade82a8dc5765c62c0d527b3eb7509a59a1defcaf348766d856c00b8789128",
+          "bytes": 1090
+        },
+        {
+          "path": "model/AGCN.py",
+          "sha256": "f9c74005a118e6c8f4189a23de5a2598de01a1ded002a0ede387d15dc021e77d",
+          "bytes": 1478
+        }
+      ],
+      "adapter": "src/sbona/backbones/agcrn.py",
+      "input_features": [
+        "flow_z"
+      ],
+      "patches": [
+        "forward signature drops the unused `targets` argument",
+        "hidden state is created on the input device/dtype instead of CPU float"
+      ],
+      "notes": "learns its own adjacency; the road graph is not consumed by design",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "stid": {
+      "repository": "https://github.com/GestaltCogTeam/STID.git",
+      "commit": "e8b313bc591bdd0101a1619962c9b503e75127c0",
+      "license": {
+        "path": "LICENSE",
+        "spdx": "Apache-2.0",
+        "verified": true
+      },
+      "files": [
+        {
+          "path": "stid/arch/stid_arch.py",
+          "sha256": "14105cbbb9265179f9c61a741db2b20e64cd999145f412cfe6d32b75c86d34b0",
+          "bytes": 4757
+        },
+        {
+          "path": "stid/arch/mlp.py",
+          "sha256": "c05f2b5b80f378cd8dbe432a019de1e9f0f88c4b8fb672ce741ebb269e197522",
+          "bytes": 953
+        }
+      ],
+      "adapter": "src/sbona/backbones/stid.py",
+      "input_features": [
+        "flow_z",
+        "tod",
+        "dow_index"
+      ],
+      "patches": [
+        "embedding index tensors are built as device-preserving long instead of .cpu()"
+      ],
+      "notes": "no spatial path: node identity embedding only",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "d2stgnn": {
+      "repository": "https://github.com/zezhishao/D2STGNN.git",
+      "commit": "82c2d38ba098a6aa87e8099c1ee8da58480692ec",
+      "license": {
+        "path": null,
+        "spdx": "UNKNOWN",
+        "verified": false,
+        "reason": "no LICENSE/COPYING file in the repository"
+      },
+      "files": [
+        {
+          "path": "models/model.py",
+          "sha256": "00c3e47a0417e3b2881b5b8e654c6532a28ed46a7af0c180a37f482d7e311f09",
+          "bytes": 7704
+        },
+        {
+          "path": "models/diffusion_block/dif_model.py",
+          "sha256": "c146d8ef4af166148857e69ef225ff497789ac7d393ecaaa73f215cac9c00ded",
+          "bytes": 4259
+        },
+        {
+          "path": "models/diffusion_block/dif_block.py",
+          "sha256": "9c68a60c7b7c4ae930665bc3417c2c49ed6c506e2a7c2b2de28f396baf1f698d",
+          "bytes": 3472
+        },
+        {
+          "path": "models/diffusion_block/forecast.py",
+          "sha256": "dcb32dab357a5aa7f9f2f4c688eed0d5d51022148d7c64c7eb6f14f383614c1c",
+          "bytes": 1146
+        },
+        {
+          "path": "models/inherent_block/inh_model.py",
+          "sha256": "4700707a0a67c82f4a131c5c05b3d1ac56f855625d265d7bd21d0643f819419a",
+          "bytes": 1300
+        },
+        {
+          "path": "models/inherent_block/inh_block.py",
+          "sha256": "54d161598e7fc090466229c6f21eea12a1369f4b36f33140e61c9820d1225766",
+          "bytes": 4106
+        },
+        {
+          "path": "models/inherent_block/forecast.py",
+          "sha256": "f159af3bc1d2a32d06f1af26907b29d43aa2a9ed472a8e6abd5b1979de6bad31",
+          "bytes": 1159
+        },
+        {
+          "path": "models/decouple/estimation_gate.py",
+          "sha256": "72e86ea941e3014037b315783d7f54e4a348df123b44378bf1ff851903b12221",
+          "bytes": 1309
+        },
+        {
+          "path": "models/decouple/residual_decomp.py",
+          "sha256": "fa55465750306990fb2845cda7d61f7d80150755cf8b7d37e198b5d21bedd135",
+          "bytes": 329
+        },
+        {
+          "path": "models/dynamic_graph_conv/dy_graph_conv.py",
+          "sha256": "8562944687432976ffe5ad537dec1075b68d95820f0805133e8433973e12013a",
+          "bytes": 2335
+        },
+        {
+          "path": "models/dynamic_graph_conv/utils/distance.py",
+          "sha256": "01254b15df572387ff2d5389d14c64f49cf7671d9735f949cef9ac8eccd1dd9e",
+          "bytes": 2653
+        },
+        {
+          "path": "models/dynamic_graph_conv/utils/mask.py",
+          "sha256": "8e63c228b4ed497a13b4dcc27e2f576e48ccdbdbac1c76631a46c102a0ba24f3",
+          "bytes": 478
+        },
+        {
+          "path": "models/dynamic_graph_conv/utils/normalizer.py",
+          "sha256": "cd5024007cc74db8278bc110e157863fd6d357757ae4253460d4ca8b67b21d88",
+          "bytes": 1133
+        },
+        {
+          "path": "models/losses.py",
+          "sha256": "eec664c9ffe24e169ccc9247282bb2fa299d8d7c73a83c3f9abff1d0018798a7",
+          "bytes": 2124
+        }
+      ],
+      "adapter": "src/sbona/backbones/d2stgnn.py",
+      "input_features": [
+        "flow_z",
+        "tod_index",
+        "dow_index"
+      ],
+      "patches": [
+        "use_pre kept hard-coded to False exactly as upstream __init__ does; support count is (len(predefined)+1)*k_s+1",
+        "graph orientation: STLocalizedConv expects out[v]=sum_w A[v,w]x[w], so supports are (A.T, A)"
+      ],
+      "notes": "upstream backcast branch and the distance function's time-slot embedding are never read",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "pdformer": {
+      "repository": "https://github.com/BUAABIGSCity/PDFormer.git",
+      "commit": "f8c8f6ad007a04fad3baee958b89504711852ce9",
+      "license": {
+        "path": "LICENSE",
+        "spdx": "MIT",
+        "verified": true
+      },
+      "files": [
+        {
+          "path": "libcity/model/traffic_flow_prediction/PDFormer.py",
+          "sha256": "9eec2f2718ab909164b274e24420f9d32bd1eac451bfd3e5e4f662097ca10933",
+          "bytes": 23326
+        }
+      ],
+      "adapter": "src/sbona/backbones/pdformer.py",
+      "input_features": [
+        "flow_z",
+        "tod_index",
+        "dow_onehot"
+      ],
+      "patches": [
+        "sem_mask (DTW cluster prior) disabled: it needs the full training series, which the contract does not expose; the semantic head uses dense attention",
+        "pattern_keys become learnable per-node parameters with sinusoidal init instead of DTW prototypes",
+        "lap_mx is computed exactly from the road graph (faithful)"
+      ],
+      "notes": "deviations are documented, not silent replacements",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "staeformer": {
+      "repository": "https://github.com/XDZhelheim/STAEformer.git",
+      "commit": "fc49d39b2f1a8e3cf37b6289d7240680e1690f3f",
+      "license": {
+        "path": null,
+        "spdx": "UNKNOWN",
+        "verified": false,
+        "reason": "no LICENSE/COPYING file in the repository"
+      },
+      "files": [
+        {
+          "path": "model/STAEformer.py",
+          "sha256": "fb2292ae1a1259131fafb16392c6b76097d16bc7fb1c36c6d3ce97ebe7be76c7",
+          "bytes": 8872
+        }
+      ],
+      "adapter": "src/sbona/backbones/staeformer.py",
+      "input_features": [
+        "flow_z",
+        "tod",
+        "dow_fraction"
+      ],
+      "patches": [
+        "input_dim relaxed from 1 to {1,3}; official value 3 projects [flow_z, tod, dow_fraction]",
+        "weekday embedding is indexed with round(dow*7) instead of .long() on a fraction (upstream always indexes day 0)"
+      ],
+      "notes": "use_mixed_proj must stay True",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "himnet": {
+      "repository": "https://github.com/XDZhelheim/HimNet.git",
+      "commit": "2a9aa44d1864f6fb60bdf9d14bafd6c1681e81a5",
+      "license": {
+        "path": null,
+        "spdx": "UNKNOWN",
+        "verified": false,
+        "reason": "no LICENSE/COPYING file in the repository"
+      },
+      "files": [
+        {
+          "path": "model/HimNet.py",
+          "sha256": "1397f9cd6899e5762844b1f9cbe33a784b0d329948a78810fb46f29dfa08a5e5",
+          "bytes": 11063
+        }
+      ],
+      "adapter": "src/sbona/backbones/himnet.py",
+      "input_features": [
+        "flow_z",
+        "tod_index",
+        "dow_index"
+      ],
+      "patches": [
+        "upstream assigns nn.init.xavier_normal_(nn.Parameter(...)) which returns None, silently dropping weights_pool/bias_pool/node_embedding; parameters are registered and initialised in place",
+        "teacher forcing disabled: the decoder never receives the target sequence",
+        "future time-of-day / day-of-week are deterministically extrapolated (calendar only, never targets)"
+      ],
+      "notes": "does not consume the road graph; supports are learned",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "stssdl": {
+      "repository": "https://github.com/Jimmy-7664/ST-SSDL.git",
+      "commit": "a98331d3a45a081778f3abb608897902a60e301d",
+      "license": {
+        "path": "LICENSE",
+        "spdx": "MIT",
+        "verified": true
+      },
+      "files": [
+        {
+          "path": "model_STSSDL/STSSDL.py",
+          "sha256": "636eace02709e167950c44b894e4cb7e5f22f5ea314f043d88ec568011296ebb",
+          "bytes": 16196
+        }
+      ],
+      "adapter": "src/sbona/backbones/stssdl.py",
+      "input_features": [
+        "flow_z",
+        "tod"
+      ],
+      "patches": [
+        "x_his = x: the previous-cycle reference series the contrastive branch expects is unavailable, so the augmenting branch is an identity",
+        "contrastive distances are computed but not returned as a loss (SBoN owns the objective)",
+        "future time-of-day is deterministically extrapolated",
+        "the contract's row-normalised operator is fed where upstream uses symmetric normalisation"
+      ],
+      "notes": "uses the road graph through AGCN (einsum('nm,bmc->bnc'))",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    },
+    "hyperd": {
+      "repository": "https://github.com/ll121202/HyperD.git",
+      "commit": "5bd93a825955cbe31b2d8dac0041ecb0e1d223d2",
+      "license": {
+        "path": null,
+        "spdx": "UNKNOWN",
+        "verified": false,
+        "reason": "no LICENSE/COPYING file in the repository"
+      },
+      "files": [
+        {
+          "path": "baselines/HyperD/arch/hyperd_arch.py",
+          "sha256": "a9cb68e603af3a9efb2cee4b4989c4904c3b8f196be796d9c186459e139fb0ae",
+          "bytes": 3997
+        },
+        {
+          "path": "baselines/HyperD/arch/STFE.py",
+          "sha256": "cf444349e73bfdda0920c85fa665c8c3df795bcb28ba6d166fac08c64eaa0a37",
+          "bytes": 4079
+        },
+        {
+          "path": "baselines/HyperD/arch/attention.py",
+          "sha256": "e7552b7ca0dae2ddf51ba91ef27c154686eccf8444c577891e93851d1bfeeabd",
+          "bytes": 739
+        },
+        {
+          "path": "baselines/HyperD/arch/loss.py",
+          "sha256": "2149523abade519639eeba2944f6d9487c808e5e7cbec01907b641bdae3f5495",
+          "bytes": 550
+        }
+      ],
+      "adapter": "src/sbona/backbones/hyperd.py",
+      "input_features": [
+        "flow_z",
+        "tod_index",
+        "dow_index"
+      ],
+      "patches": [
+        "periodic tables are zero-initialised (official daily_init.npy / weekly_init.npy need the training set); set_periodic_prior(daily, weekly) injects them",
+        "dual_view_loss is not returned (runner-level auxiliary loss)",
+        "weekday index is integer; the official code multiplies a dow fraction by 288",
+        "graph orientation: einsum('ln,nv->lv') pushes data @ adj, so the adapter passes A.T"
+      ],
+      "notes": "the road graph enters through the learned periodic tables",
+      "validation": {
+        "source_read": true,
+        "cpu_forward": true,
+        "cpu_backward": true,
+        "native_equivalence": false,
+        "gpu_smoke": false
+      }
+    }
+  },
+  "pending": [
+    "D2STGNN",
+    "HimNet",
+    "STAEformer",
+    "HyperD"
+  ],
+  "pending_reason": "The upstream repositories ship no LICENSE file; publishable artefacts stay blocked until the authors grant permission or an explicit citation clause is agreed."
 }

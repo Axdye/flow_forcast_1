@@ -287,6 +287,10 @@ class CandidateOutput:
     actions: ActionOutput
     h_global: Tensor  # [B, D]
     base_pred_z: Tensor  # [B, T, N, 1]
+    # Optional selector logits for adapters that learn their own scorer instead
+    # of the Stage-D Router (currently only the MCL-WTA baseline).  ``None``
+    # keeps every other adapter byte-for-byte unchanged.
+    candidate_logits: Tensor | None = None  # [B, K]
 
     def __post_init__(self) -> None:
         _check_float_tensor("pred_z", self.pred_z, 5)
@@ -297,6 +301,13 @@ class CandidateOutput:
         _require(self.actions.physical.shape[:2] == (b, k), "action K mismatch")
         _require(self.h_global.shape[0] == b, "h_global batch mismatch")
         _require(self.base_pred_z.shape == (b, t, n, 1), "base_pred_z shape mismatch")
+        if self.candidate_logits is not None:
+            _check_float_tensor("candidate_logits", self.candidate_logits, 2)
+            _require(
+                self.candidate_logits.shape == (b, k),
+                f"candidate_logits must be [B, K] = {(b, k)}, got "
+                f"{tuple(self.candidate_logits.shape)}",
+            )
         _check_same_device(self.pred_z, self.h_global, self.base_pred_z)
 
     @property
