@@ -2,7 +2,7 @@
 
 版本：v1.0 · 2026-10-28（Asia/Shanghai） · 计划硬件：1–4 × NVIDIA A100 80GB。
 
-**当前交付已包含 v1 代码实现与 CPU/synthetic 验证，但尚未完成 GPU smoke、真实数据训练或任何论文结果。** 下文 CLI 已实现；所有科学主张仍需实验检验。实现与验证状态见 `reviews/STATUS.md` 和 `reviews/HANDOFF.md`。目标安装路径为 `/Users/ljw/Documents/code/SBoN-Adapter`。
+**当前交付已包含 v1 代码实现与 CPU/synthetic 验证，PEMS03/04/07/08 已完成 `prepare-data`（含日历），但尚未完成 GPU smoke、真实数据训练或任何论文结果。** 下文 CLI 已实现；所有科学主张仍需实验检验。实现与验证状态见 `reviews/STATUS.md`、`reviews/HANDOFF.md` 与 `reviews/DATA_PROVENANCE.md`。目标安装路径为 `/Users/ljw/Documents/code/SBoN-Adapter`。
 
 研究对象是**交通流多步预测**，不是交通信号控制，不训练大语言模型。DeepSeek 是代码实现协作者；A100 用于交通预测模型训练和实验。
 
@@ -47,6 +47,20 @@
 先由 DeepSeek A 完成数据/API 基础合同，再让 B/C/D 在独立分支开发；第一轮 B/C/D 可用严格符合合同的 synthetic fixture 并行，不等待真实数据。每个任务提交可审查 commit 和交付说明，由 Codex 检查接口、实现、测试和证据后集成。不要让四个会话同时编辑一个工作目录。
 
 工程闭环后，按实验文档的 Gate 顺序开跑；发现科学假设不成立可以交付正确的失败结果，不能为通过验收更改测试集或指标。
+
+## 数据与日历
+
+`data/` 被 `.gitignore` 排除，需按 `reviews/DATA_PROVENANCE.md` 放置原始文件。PEMS 四件套已提供同构配置：
+
+```bash
+for d in 03 04 07 08; do
+  python -m sbona.cli prepare-data --config configs/experiments/pems$d.yaml
+done
+```
+
+日历不再靠猜：`scripts/build_calendar.py` 从记录在案的起始日期生成 `datetime64` 轴，经 `data.timestamps_file` 注入；文件 hash 进入 prepare signature，改动会触发重建。没有日历文件时 weekday 保持禁用。
+
+METR-LA / PEMS-BAY 的时间序列与 DCRNN 邻接已下载核验，但**尚未接入**：缺少 derived topology 标签与 speed 单位协议，配置会拒绝而不是静默当成流量。
 
 ## CLI 合同（已实现）
 

@@ -74,6 +74,7 @@ class DataConfig:
     data_file: str | None = None
     graph_file: str | None = None
     node_ids_file: str | None = None
+    timestamps_file: str | None = None
     timestamps_available: bool | None = None
     time_of_day: bool = True
     day_of_week: bool = False
@@ -99,6 +100,7 @@ class DataConfig:
         "data_file",
         "graph_file",
         "node_ids_file",
+        "timestamps_file",
         "timestamps_available",
         "time_of_day",
         "day_of_week",
@@ -136,6 +138,7 @@ class DataConfig:
             data_file=data.get("data_file"),
             graph_file=data.get("graph_file"),
             node_ids_file=data.get("node_ids_file"),
+            timestamps_file=data.get("timestamps_file"),
             timestamps_available=data.get("timestamps_available"),
             time_of_day=bool(data.get("time_of_day", True)),
             day_of_week=bool(data.get("day_of_week", False)),
@@ -192,6 +195,11 @@ class DataConfig:
                      "synthetic_num_steps is too small")
         else:
             _require(self.data_file is not None, "data.data_file is required for real datasets")
+        if self.timestamps_file is not None:
+            _require(
+                self.timestamps_available is not False,
+                "data.timestamps_file contradicts data.timestamps_available=false",
+            )
         if not self.time_of_day:
             _require(not self.day_of_week, "day_of_week requires time_of_day")
 

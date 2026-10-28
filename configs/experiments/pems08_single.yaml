@@ -19,9 +19,10 @@ data:
   mape_min_abs_target: 1.0
   data_file: PEMS08/data.npz
   graph_file: PEMS08/PEMS08.csv
-  timestamps_available: false
+  timestamps_file: PEMS08/calendar.npz
+  timestamps_available: true
   time_of_day: true
-  day_of_week: false
+  day_of_week: true
   flow_channel: 0
 
 graph:
@@ -34,7 +35,7 @@ backbone:
   mode: frozen
   input_dim: 1
   use_mixed_proj: true
-  dow_embedding_dim: 0
+  dow_embedding_dim: 24
 
 adapter:
   num_candidates: 1

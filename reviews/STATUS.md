@@ -11,13 +11,14 @@
 | B 模型实现 | v1 已实现（STAEformer 主线） | `src/sbona/backbones/staeformer.py`、`models/`；`tests/unit/test_actions_decoder.py` |
 | C 训练实现 | v1 已实现（A/B/C/D + probe） | `src/sbona/training/`；`tests/integration/test_synthetic_pipeline.py`、`test_cli_synthetic.py` |
 | D 评测实现 | v1 已实现（metrics/oracle/regimes/artifacts/profile） | `src/sbona/evaluation/`；`tests/unit/test_metrics.py`、`test_objectives.py`、`test_regimes.py`、`test_artifacts.py` |
-| CPU 单测/集成测试 | 已执行：52 passed, 1 skipped | `python -m pytest -q`；环境 Python 3.11.11、torch 2.2.2、numpy 1.26.4、scipy 1.15.2 |
-| 静态检查 | 已执行：ruff 无错误 | `ruff check src tests` |
+| CPU 单测/集成测试 | 已执行：59 passed, 1 skipped | `python -m pytest -q`；环境 Python 3.11.11、torch 2.2.2、numpy 1.26.4、scipy 1.15.2 |
+| 静态检查 | 已执行：ruff 无错误 | `ruff check src tests scripts` |
 | GPU smoke | 未执行 | `tests/gpu/test_gpu_smoke.py` 因无 CUDA 跳过；不声称 GPU 结果 |
-| 真实数据审计 | 部分执行，未训练 | PEMS08 `prepare-data` 得到 `(17856, 170)`、274 条无向边；2 样本 CPU forward 通过 |
-| 真实数据训练/评测 | 未执行 | 无真实 PEMS08 checkpoint 或 MAE 结果 |
+| 真实数据审计 | 部分执行，未训练 | PEMS03/04/07/08 均完成 `prepare-data`（含日历与 day-of-week）；PEMS08 2 样本 CPU forward 通过；见 `reviews/DATA_PROVENANCE.md` |
+| 真实数据训练/评测 | 未执行 | 无任何真实 PEMS checkpoint 或 MAE 结果 |
 | 可路由性与科学有效性 | 未验证 | 尚无真实实验；synthetic 数值不是科学证据 |
 | 外部 backbone runtime | 未验证 | STID / Graph WaveNet / AGCRN 仍为 pending |
+| METR-LA / PEMS-BAY 数据 | 已下载并核验，未接入 | 邻接取自 Zenodo 5724362（CC-BY-4.0），节点顺序与起始时间已核验；缺 derived topology 与 speed unit 协议 |
 | 依赖 lock / CI | 未提供 | `pyproject.toml` 已提供；锁文件与 CI 配置待补 |
 | Codex 最终代码审查 | 等待 | 按 README_REVIEW 执行 |
 
@@ -26,9 +27,9 @@
 ```bash
 # 临时 Python 3.11 环境（torch 2.2.2，CPU）
 python -m pytest -q
-# 52 passed, 1 skipped (CUDA unavailable)
+# 59 passed, 1 skipped (CUDA unavailable)
 
-ruff check src tests
+ruff check src tests scripts
 # All checks passed
 
 python -m compileall -q src/sbona
@@ -41,5 +42,7 @@ python -m compileall -q src/sbona
 - 不能推出 Router 可学习、oracle 收益可部署。
 - 不能推出 STAEformer 与其他 backbone 等价或兼容。
 - 不能推出 GPU 显存、吞吐或 bf16 行为符合验收要求。
+- 不能推出 METR-LA / PEMS-BAY 已可训练：数据已下载核验，但拓扑标签与速度单位协议尚未实现。
+- 不能宣称日历是发布方原始时间戳：PEMS 的日历由记录在案的起始日期生成并做周末一致性校验。
 
 请后续每次更新附 commit/命令/日志路径，不只把“未开始”改为“完成”。

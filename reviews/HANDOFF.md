@@ -113,15 +113,24 @@ python -m sbona.cli prepare-data \
 - **真实数据训练未执行**：没有 PEMS08 checkpoint、真实 MAE、Router 收益或 oracle 分析。
 - **STID / Graph WaveNet / AGCRN 未实现**：缺 pinned commit/许可证/等价验证，配置会 fail-fast，不冒充支持。
 - **依赖 lock 与 CI 未提供**：`pyproject.toml` 有依赖声明，但无锁文件/CI workflow。
-- **真实 PEMS08 的 timestamps 不可用**：weekend / day-of-week 默认关闭；`timestamps_available: false`。
+- **日历来源是起始日期而非发布方原始时间戳**：`scripts/build_calendar.py` 从记录在案的起始日期生成 `datetime64[s]` 轴，并用周末/工作日流量比做一致性校验。若拿到原始时间戳应替换 `data/<NAME>/calendar.npz` 并重跑 `prepare-data`。
+- **METR-LA / PEMS-BAY 只完成数据下载与核验**：缺 `derived_binary_undirected` 拓扑标签与 speed 单位协议，配置会拒绝，不能声称可训练。
 - **probe 对数据长度有要求**：小型 synthetic fixture 会因 R/Q 窗口不足而 fail-fast；1200 步 synthetic 已验证可运行。
 - **上游 STAEformer 许可**：本地 pin commit `fc49d39b2f1a8e3cf37b6289d7240680e1690f3f` 无 LICENSE，因此本仓按其架构重实现，未直接复制源码。
+
+## 4.1 数据与日历（2026-10-28 更新）
+
+- `data/` 已放入 PEMS03/04/07/08 的 `data.npz`、图 CSV、PEMS03 节点 ID 与 `calendar.npz`；全部经 `prepare-data` 验证。
+- 新增 `data.timestamps_file` 配置项：支持 `.npy`/`.npz` 的 `datetime64 [M]`、整数 `[M]` 或 `(tod, dow) [M,2]` 表；文件 sha256 进入 prepare signature，改动即重建。
+- `build_calendar` 新增 `[M,2]` 分支，要求 tod ∈ [0,1)、dow 为整数 0..6；不再默默把全零当周一。
+- 四个 PEMS 配置已启用 `day_of_week: true` 与 `dow_embedding_dim: 24`（上游默认值）；PEMS08 CPU 前向已验证嵌入路径。
+- METR-LA / PEMS-BAY 的邻接取自 Zenodo 5724362（CC-BY-4.0），已核验节点顺序与起始时间；转换后 METR-LA 1313 条无向边、PEMS-BAY 2079 条。详见 `reviews/DATA_PROVENANCE.md`。
 
 ## 5. 建议下一步
 
 1. 在 A100 环境执行 `tests/gpu/test_gpu_smoke.py`，记录驱动/CUDA/显存/耗时。
 2. 补齐依赖 lock 与最小 CPU CI。
-3. 按 `docs/README_EXPERIMENTS.md` 的 Gate 顺序跑 PEMS08 Stage A → B → C → D，并保存完整 run 目录。
+3. 按 `docs/README_EXPERIMENTS.md` 的 Gate 顺序跑 PEMS08 Stage A → B → C → D，并保存完整 run 目录；用 PEMS04/07 做跨数据集复核。
 4. 先看 Router 是否真的优于 uniform / single；若否，按失败结果交付，不改测试集或指标。
 5. 再评估第二个 backbone；没有 pin/许可证/等价测试前不要合并。
 
