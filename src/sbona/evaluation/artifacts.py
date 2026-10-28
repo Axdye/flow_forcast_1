@@ -16,8 +16,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from sbona.evaluation.statistics import aggregate_seeds
-
 METRICS_SCHEMA_VERSION = 1
 
 
@@ -205,19 +203,30 @@ def aggregate_experiments(
     manifest_csv: str | Path,
     output_json: str | Path,
     output_csv: str | Path | None = None,
+    *,
+    split: str = "test",
 ) -> dict[str, Any]:
-    """Read experiments.csv, validate provenance and aggregate by seed.
+    """Read experiments.csv and build the comparison table for one split.
 
-    Required columns: ``run_id, method, dataset, backbone, seed, protocol_id,
-    data_hash, metric, value, units, deployable, artifact``.  Oracle rows that
-    claim ``deployable=true`` are rejected.
+    v1 runs a **single fixed seed**, so this is not a mean-over-seeds step: it
+    validates provenance, keeps rows of the requested split only, and requires
+    exactly one row per ``(dataset, backbone, method, metric)``.  Duplicate rows
+    (a re-evaluated run, or the same run measured on two splits) are an error
+    rather than being counted as independent repeats.
+
+    Required columns: ``run_id, method, dataset, backbone, split, seed,
+    protocol_id, data_hash, metric, value, units, deployable, artifact``.  Oracle
+    rows that claim ``deployable=true`` are rejected.
     """
+    if split not in ("train", "val", "test"):
+        raise ValueError(f"unknown split {split!r}")
     manifest_csv = Path(manifest_csv)
     required = {
         "run_id",
         "method",
         "dataset",
         "backbone",
+        "split",
         "seed",
         "protocol_id",
         "data_hash",
@@ -234,7 +243,10 @@ def aggregate_experiments(
             raise ValueError("experiments.csv has no header")
         missing = required - set(reader.fieldnames)
         if missing:
-            raise ValueError(f"experiments.csv missing columns: {sorted(missing)}")
+            raise ValueError(
+                f"experiments.csv missing columns: {sorted(missing)}; re-run evaluate/train "
+                "so the table records its split"
+            )
         for line_number, row in enumerate(reader, start=2):
             method = row["method"].strip()
             deployable = str(row["deployable"]).strip().lower() in ("1", "true", "yes")
@@ -242,18 +254,36 @@ def aggregate_experiments(
                 raise ValueError(
                     f"line {line_number}: oracle method {method!r} cannot be marked deployable"
                 )
+            row_split = str(row["split"]).strip()
+            if row_split not in ("train", "val", "test"):
+                raise ValueError(f"line {line_number}: unknown split {row_split!r}")
             artifact = Path(row["artifact"])
             if not artifact.exists():
                 raise ValueError(f"line {line_number}: missing artifact {artifact}")
             rows.append(
                 {
                     **row,
+                    "split": row_split,
                     "seed": int(row["seed"]),
                     "value": float(row["value"]),
                     "deployable": deployable,
                     "artifact": str(artifact),
                 }
             )
+
+    seeds = {row["seed"] for row in rows}
+    if len(seeds) > 1:
+        raise ValueError(
+            f"experiments.csv mixes {len(seeds)} seeds {sorted(seeds)}; v1 aggregates a single "
+            "fixed seed only. Use one output root per seed."
+        )
+    selected = [row for row in rows if row["split"] == split]
+    if rows and not selected:
+        available = sorted({row["split"] for row in rows})
+        raise ValueError(
+            f"experiments.csv has no split={split} rows (available: {available}); evaluate that "
+            f"split first"
+        )
 
     protocol_ids = {row["protocol_id"] for row in rows}
     if len(protocol_ids) > 1:
@@ -271,31 +301,44 @@ def aggregate_experiments(
     if inconsistent:
         raise ValueError(f"inconsistent data hashes: {inconsistent}")
 
-    groups: dict[tuple[str, str, str, str], list[float]] = {}
-    for row in rows:
+    table: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    for row in selected:
         key = (row["dataset"], row["backbone"], row["method"], row["metric"])
-        groups.setdefault(key, []).append(row["value"])
-    aggregated = []
-    for (dataset, backbone, method, metric), values in sorted(groups.items()):
-        stats = aggregate_seeds(values)
-        aggregated.append(
-            {
-                "dataset": dataset,
-                "backbone": backbone,
-                "method": method,
-                "metric": metric,
-                "seeds": stats["n"],
-                "mean": stats["mean"],
-                "std": stats["std"],
-            }
-        )
+        previous = table.get(key)
+        if previous is not None:
+            raise ValueError(
+                f"duplicate {split} row for {key}: {previous['run_id']!r} and {row['run_id']!r}. "
+                "One seed produces exactly one number per method/metric; delete the stale "
+                "evaluation run or re-run it with the same --eval-run-id."
+            )
+        table[key] = row
+
+    seed = next(iter(seeds), None)
+    aggregated = [
+        {
+            "dataset": dataset,
+            "backbone": backbone,
+            "method": method,
+            "metric": metric,
+            "split": split,
+            "seed": seed,
+            "value": row["value"],
+            "units": row["units"],
+            "run_id": row["run_id"],
+        }
+        for (dataset, backbone, method, metric), row in sorted(table.items())
+    ]
 
     document = {
         "schema_version": METRICS_SCHEMA_VERSION,
         "protocol_id": next(iter(protocol_ids)) if protocol_ids else None,
+        "split": split,
+        "seed": seed,
         "rows": len(rows),
+        "selected_rows": len(selected),
         "groups": aggregated,
         "warnings": [
+            "Single fixed seed: no seed-to-seed variance is reported or implied.",
             "Only deployable rows belong in the main comparison table.",
             "Oracle rows are offline diagnostics and are not deployable.",
         ],
@@ -307,7 +350,17 @@ def aggregate_experiments(
         with output_csv.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(
                 handle,
-                fieldnames=["dataset", "backbone", "method", "metric", "seeds", "mean", "std"],
+                fieldnames=[
+                    "dataset",
+                    "backbone",
+                    "method",
+                    "metric",
+                    "split",
+                    "seed",
+                    "value",
+                    "units",
+                    "run_id",
+                ],
             )
             writer.writeheader()
             writer.writerows(aggregated)

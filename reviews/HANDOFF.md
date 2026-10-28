@@ -47,7 +47,7 @@
 ```bash
 cd /Users/ljw/Documents/code/SBoN-Adapter
 python -m pytest -q
-# 77 passed, 8 skipped
+# 89 passed, 8 skipped
 # skipped: GPU smoke (no CUDA) + 7 opt-in raw-import golden tests
 
 SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
@@ -132,6 +132,16 @@ python -m sbona.cli prepare-data \
 - 四个 PEMS 配置已启用 `day_of_week: true` 与 `dow_embedding_dim: 24`（上游默认值）；PEMS08 CPU 前向已验证嵌入路径。
 - METR-LA / PEMS-BAY 的邻接取自 Zenodo 5724362（CC-BY-4.0），已核验节点顺序与起始时间；转换后 METR-LA 1313 条无向边、PEMS-BAY 2079 条。配置使用 `derived_binary_undirected`（上游矩阵非对称）、`data.unit: speed (mph)` 与 `official_compat_nonzero`；已完成 `prepare-data` 与 CPU 前向，未训练。详见 `reviews/DATA_PROVENANCE.md`。
 - 计划外实现（外部日历、派生拓扑、单位协议、额外数据集、下载/导入脚本、golden hash 测试、`.gitignore` 修复、已知偏离）汇总在 `reviews/EXTRA_WORK.md`。
+
+## 4.2 实验表格与 checkpoint 选择（2026-10-28 追加）
+
+修掉两类会让实验表格不可信的问题，细节见 `reviews/EXTRA_WORK.md` X13：
+
+- **拿错 checkpoint**：自动发现原先按目录 mtime 取“最新”，同 stage 下别的 seed / 别的 adapter 会命中。现在按身份哈希匹配：`backbone_identity_hash`（seed+protocol+backbone 架构，Stage A 只用它，保证 Base 可复用）、`adapter_identity_hash`（再加 method_id+adapter 参数+K，B/C/D/P 使用）。同一身份多命中直接报错列目录，不再猜。`train-candidates --kind <非默认>` 会把 kind 并入 method_id，避免消融与主方法共用身份。
+- **算错结果**：`experiments.csv` 增加 `split` 列（训练期 `val`，`evaluate` 用实际 split）；`aggregate --split test` 只建该 split 的表。删除“按 seed 求 mean/std”，每组只能有一行；多 seed、重复行、缺 `split` 列均报错。
+- **单 seed**：seed 只来自配置，已删除所有 `--seed` CLI 覆盖，无法事后改标。多 seed 统计是暂缓项，不是已满足项。
+
+验证：`pytest -q` → 89 passed, 8 skipped（新增 `tests/unit/test_run_selection.py` 8 项与 `test_artifacts.py` 聚合测试）；独立脚本 `scripts/verify_selection.py` 13 项全 PASS；`ruff` 与 `compileall` 通过。仍**未**执行真实训练 / GPU smoke。
 
 ## 5. 建议下一步
 

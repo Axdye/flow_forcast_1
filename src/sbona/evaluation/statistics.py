@@ -119,16 +119,6 @@ def block_sign_permutation(
     }
 
 
-def aggregate_seeds(values: list[float] | np.ndarray) -> dict[str, float | int | None]:
-    """Mean and sample standard deviation (``ddof=1``) across seeds."""
-    array = np.asarray(values, dtype=np.float64)
-    array = array[np.isfinite(array)]
-    if array.size == 0:
-        return {"mean": None, "std": None, "n": 0}
-    std = float(array.std(ddof=1)) if array.size > 1 else None
-    return {"mean": float(array.mean()), "std": std, "n": int(array.size)}
-
-
 def holm_correction(pvalues: list[float]) -> list[float]:
     """Holm step-down adjusted p-values, preserving input order."""
     m = len(pvalues)
@@ -162,7 +152,6 @@ def per_origin_records(records: list[dict[str, float]]) -> tuple[np.ndarray, np.
 __all__ = [
     "paired_moving_block_bootstrap",
     "block_sign_permutation",
-    "aggregate_seeds",
     "holm_correction",
     "per_origin_records",
 ]

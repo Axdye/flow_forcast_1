@@ -58,6 +58,8 @@ from sbona.training.trainer import (
     BaseTrainer,
     CandidateTrainer,
     RouterTrainer,
+    adapter_identity_hash,
+    backbone_identity_hash,
     make_hashes,
     move_input,
     resolve_device,
@@ -68,6 +70,7 @@ EXPERIMENT_COLUMNS = (
     "method",
     "dataset",
     "backbone",
+    "split",
     "seed",
     "protocol_id",
     "data_hash",
@@ -103,11 +106,9 @@ def _set_determinism(seed: int) -> None:
 def _load_cfg(args: argparse.Namespace) -> Config:
     if getattr(args, "config", None) is None:
         raise ConfigError("--config is required for this command")
-    cfg = load_config(args.config)
-    if getattr(args, "seed", None) is not None:
-        cfg = replace(cfg, seed=int(args.seed))
-        cfg.validate()
-    return cfg
+    # The seed comes from the config and nowhere else: one fixed seed per
+    # experiment, so a CLI flag cannot relabel a run after the fact.
+    return load_config(args.config)
 
 
 def _roots(
@@ -261,6 +262,30 @@ def _write_failure(args: argparse.Namespace, stage: str, exc: BaseException) -> 
     )
 
 
+#: Hashes a run must reproduce before its checkpoint may be reused.
+#:
+#: ``backbone_identity_hash`` / ``adapter_identity_hash`` are the important ones:
+#: they cover seed, method/adapter kind, architecture and K.  Without them two
+#: runs of the same stage/data/split (for example seed 11 and seed 22) are
+#: indistinguishable and the stale one is picked silently.
+DATA_SELECTION_KEYS = (
+    "data_hash",
+    "valid_hash",
+    "graph_hash",
+    "split_hash",
+    "scaler_hash",
+    "num_nodes",
+    "num_candidates",
+)
+BACKBONE_SELECTION_KEYS = ("backbone_identity_hash",) + DATA_SELECTION_KEYS
+ADAPTER_SELECTION_KEYS = ("adapter_identity_hash",) + BACKBONE_SELECTION_KEYS
+
+
+def _selection_keys(stage: str) -> tuple[str, ...]:
+    """Stage A holds only a backbone, so its adapter identity must not be pinned."""
+    return BACKBONE_SELECTION_KEYS if stage == "A" else ADAPTER_SELECTION_KEYS
+
+
 def _iter_run_manifests(output_root: Path):
     if not output_root.is_dir():
         return
@@ -299,15 +324,8 @@ def _find_run(
         return _resolve_checkpoint(None, run_dir)
 
     expected = make_hashes(prepared, cfg, num_candidates)
-    keys = (
-        "data_hash",
-        "valid_hash",
-        "graph_hash",
-        "split_hash",
-        "scaler_hash",
-        "num_nodes",
-        "num_candidates",
-    )
+    keys = _selection_keys(stage)
+    matches: list[Path] = []
     for run_dir, manifest in _iter_run_manifests(output_root):
         if manifest.get("stage") != stage:
             continue
@@ -318,9 +336,22 @@ def _find_run(
         if not candidate.is_file():
             candidate = run_dir / "checkpoint_latest.pt"
         if candidate.is_file():
-            return candidate
+            matches.append(candidate)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        # One seed produces exactly one run per stage.  More than one match means
+        # the output root holds interchangeable-looking runs (same seed/method/
+        # data but re-trained, or a stale copy); guessing by mtime silently picks
+        # the wrong weights.
+        names = ", ".join(sorted(path.parent.name for path in matches))
+        raise ValueError(
+            f"{len(matches)} stage {stage} {label} runs match the current seed/method/"
+            f"data/split/scaler/graph/K: {names}; expected exactly one. Pass an explicit "
+            f"--{label}-run or --{label}-checkpoint, or remove the stale run(s)."
+        )
     raise FileNotFoundError(
-        f"no completed stage {stage} {label} checkpoint matching the current "
+        f"no stage {stage} {label} checkpoint matching the current seed/method/"
         f"data/split/scaler/graph/K was found under {output_root}; pass an explicit "
         f"--{label}-checkpoint or --{label}-run"
     )
@@ -380,12 +411,16 @@ def _append_experiment_rows(
             continue
         if not np.isfinite(numeric):
             continue
+        split = str(row["split"])
+        if split not in ("train", "val", "test"):
+            raise ValueError(f"experiment row has unknown split {split!r}")
         prepared_rows.append(
             {
                 "run_id": run.run_dir.name,
                 "method": str(row["method"]),
                 "dataset": prepared.dataset,
                 "backbone": cfg.backbone.name,
+                "split": split,
                 "seed": str(cfg.seed),
                 "protocol_id": cfg.protocol_id,
                 "data_hash": str(data_hash),
@@ -401,6 +436,16 @@ def _append_experiment_rows(
     _write_experiment_rows(run.path("experiments.csv"), prepared_rows)
 
     root_path = output_root / "experiments.csv"
+    if root_path.is_file():
+        with root_path.open("r", encoding="utf-8", newline="") as handle:
+            header = next(csv.reader(handle), None)
+        if header is not None and "split" not in header:
+            # Silently appending would leave old rows with an empty split and
+            # make val/test indistinguishable, so refuse instead.
+            raise ValueError(
+                f"{root_path} was written by an older schema without a 'split' column; "
+                "move it aside (or re-run the earlier evaluations) before appending"
+            )
     existing = [
         row
         for row in _read_experiment_rows(root_path)
@@ -535,6 +580,7 @@ def cmd_train_base(args: argparse.Namespace) -> int:
                 "method": "sbona_base",
                 "metric": "raw_mae_all",
                 "value": metrics.get("raw_mae_all"),
+                "split": "val",
                 "deployable": True,
             }
         ],
@@ -563,10 +609,21 @@ def _base_checkpoint(
     )
 
 
-def _load_backbone_from_checkpoint(model, checkpoint: Path, device: torch.device) -> None:
+def _load_backbone_from_checkpoint(
+    model, checkpoint: Path, device: torch.device, cfg: Config
+) -> None:
     payload = load_checkpoint(checkpoint, map_location=device)
     if payload.get("stage") != "A":
         raise ValueError(f"expected a stage A base checkpoint, got {payload.get('stage')}")
+    # An explicit --base-checkpoint must still come from this seed/protocol/
+    # architecture: a foreign backbone would make the whole adapter stage
+    # silently incomparable to its Base.
+    stored = payload.get("hashes", {}).get("backbone_identity_hash")
+    if stored != backbone_identity_hash(cfg):
+        raise ValueError(
+            f"base checkpoint {checkpoint} does not match the current seed/protocol/"
+            "backbone architecture; pass the Base checkpoint trained for this config"
+        )
     load_state_dict_strict(model.backbone, payload["state_dict"], "base backbone")
     model.backbone.set_mode(model.config.backbone.mode)
 
@@ -638,6 +695,7 @@ def _finish_candidate_run(
                 "method": method,
                 "metric": "raw_mae_all" if stage == "B" else "candidate_oracle_mae_all",
                 "value": metric_key,
+                "split": "val",
                 "deployable": bool(deployable),
             }
         ],
@@ -676,7 +734,7 @@ def cmd_train_single(args: argparse.Namespace) -> int:
         num_nodes=prepared.num_nodes,
         steps_per_day=prepared.steps_per_day,
     )
-    _load_backbone_from_checkpoint(model, base_checkpoint, device)
+    _load_backbone_from_checkpoint(model, base_checkpoint, device, cfg)
     trainer = CandidateTrainer(
         active_cfg, prepared, model, run, device, stage="B"
     )
@@ -712,24 +770,32 @@ def cmd_train_candidates(args: argparse.Namespace) -> int:
     kind = getattr(args, "kind", "structured")
     if kind == "single":
         raise ValueError("use the train-single command for the K=1 Stage-B baseline")
+    # An ablation adapter must not share the main method's identity: otherwise a
+    # run trained with ``--kind independent_heads`` and one trained with the
+    # default kind are indistinguishable to ``_find_run`` and either could be
+    # handed to the next stage.
+    active_cfg = cfg
+    if kind != "structured":
+        active_cfg = replace(cfg, method_id=f"{cfg.method_id}_{kind}")
+        active_cfg.validate()
     run, _, manifest = _make_run(
         args,
-        cfg,
+        active_cfg,
         prepared,
         output_root,
         stage="C",
-        num_candidates=cfg.adapter.num_candidates,
+        num_candidates=active_cfg.adapter.num_candidates,
         device=device,
         parent_checkpoint=base_checkpoint,
     )
     model = build_adapter(
         kind,
-        cfg,
+        active_cfg,
         num_nodes=prepared.num_nodes,
         steps_per_day=prepared.steps_per_day,
     )
-    _load_backbone_from_checkpoint(model, base_checkpoint, device)
-    trainer = CandidateTrainer(cfg, prepared, model, run, device, stage="C")
+    _load_backbone_from_checkpoint(model, base_checkpoint, device, cfg)
+    trainer = CandidateTrainer(active_cfg, prepared, model, run, device, stage="C")
     result = trainer.fit(
         resume=getattr(args, "resume", None),
         max_epochs=getattr(args, "max_epochs", None),
@@ -738,7 +804,7 @@ def cmd_train_candidates(args: argparse.Namespace) -> int:
     )
     _finish_candidate_run(
         args,
-        cfg,
+        active_cfg,
         prepared,
         output_root,
         run,
@@ -746,7 +812,7 @@ def cmd_train_candidates(args: argparse.Namespace) -> int:
         trainer,
         result,
         stage="C",
-        method=f"{cfg.method_id}_{kind}",
+        method=active_cfg.method_id,
         deployable=False,
     )
     return 0
@@ -782,6 +848,17 @@ def cmd_train_router(args: argparse.Namespace) -> int:
         raise ValueError(
             "candidate checkpoint K does not match adapter.num_candidates: "
             f"{payload.get('hashes', {}).get('num_candidates')} != {cfg.adapter.num_candidates}"
+        )
+    # Same guard as the Base checkpoint: an explicit --candidate-checkpoint from
+    # another seed/method/K would train a Router on weights that the deployed
+    # pipeline can never produce.
+    if (
+        payload.get("hashes", {}).get("adapter_identity_hash")
+        != adapter_identity_hash(cfg, cfg.adapter.num_candidates)
+    ):
+        raise ValueError(
+            f"candidate checkpoint {candidate_checkpoint} does not match the current "
+            "seed/protocol/method/K; pass the candidate run trained by this config"
         )
     if int(cfg.adapter.num_candidates) < 2:
         raise ValueError("Router training requires K >= 2")
@@ -858,12 +935,14 @@ def cmd_train_router(args: argparse.Namespace) -> int:
                 "method": f"{cfg.method_id}_router",
                 "metric": "router_raw_mae_all",
                 "value": metrics.get("router_raw_mae_all"),
+                "split": "val",
                 "deployable": True,
             },
             {
                 "method": "oracle_mae_offline",
                 "metric": "raw_mae_all",
                 "value": metrics.get("oracle_mae_all"),
+                "split": "val",
                 "deployable": False,
             },
         ],
@@ -958,19 +1037,7 @@ def _check_hashes_against_data(
     payload: dict[str, Any], prepared: PreparedData, cfg: Config, num_candidates: int
 ) -> None:
     expected = make_hashes(prepared, cfg, num_candidates)
-    validate_resume(
-        payload,
-        expected,
-        keys=(
-            "data_hash",
-            "valid_hash",
-            "graph_hash",
-            "split_hash",
-            "scaler_hash",
-            "num_nodes",
-            "num_candidates",
-        ),
-    )
+    validate_resume(payload, expected, keys=_selection_keys(str(payload.get("stage"))))
 
 
 def _router_checkpoint_for(
@@ -983,25 +1050,23 @@ def _router_checkpoint_for(
     if explicit is not None:
         return _resolve_checkpoint(explicit, None)
     expected = make_hashes(prepared, cfg, cfg.adapter.num_candidates)
-    keys = (
-        "data_hash",
-        "valid_hash",
-        "graph_hash",
-        "split_hash",
-        "scaler_hash",
-        "num_nodes",
-        "num_candidates",
-    )
-    for run_dir, manifest in _iter_run_manifests(output_root):
-        if manifest.get("stage") != "D":
-            continue
-        stored = manifest.get("hashes", {})
-        if any(stored.get(key) != expected.get(key) for key in keys):
-            continue
-        candidate = run_dir / "checkpoint_best.pt"
-        if candidate.is_file():
-            return candidate
-    return None
+    matches = [
+        run_dir / "checkpoint_best.pt"
+        for run_dir, manifest in _iter_run_manifests(output_root)
+        if manifest.get("stage") == "D"
+        and all(
+            manifest.get("hashes", {}).get(key) == expected.get(key)
+            for key in ADAPTER_SELECTION_KEYS
+        )
+        and (run_dir / "checkpoint_best.pt").is_file()
+    ]
+    if len(matches) > 1:
+        names = ", ".join(sorted(path.parent.name for path in matches))
+        raise ValueError(
+            f"{len(matches)} stage D Router runs match the current seed/method/K: {names}; "
+            "expected exactly one. Pass an explicit --router-checkpoint or remove the stale run(s)."
+        )
+    return matches[0] if matches else None
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:
@@ -1017,9 +1082,6 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         cfg = _checkpoint_config(None, payload)
         if cfg is None:
             raise ConfigError("run has no resolved_config.yaml; pass --config")
-    if getattr(args, "seed", None) is not None:
-        cfg = replace(cfg, seed=int(args.seed))
-        cfg.validate()
     data_root, output_root = _roots(args, cfg)
     _set_determinism(cfg.seed)
     prepared = load_or_prepare(cfg, data_root, output_root, synthetic=_synthetic_flag(args))
@@ -1111,6 +1173,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                     "method": "sbona_base",
                     "metric": "raw_mae_all",
                     "value": result.document["base"].get("raw_mae_all"),
+                    "split": split,
                     "deployable": True,
                 }
             ],
@@ -1202,6 +1265,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                 "method": f"{cfg.method_id}_router",
                 "metric": "router_raw_mae_all",
                 "value": result.document["router"].get("raw_mae_all"),
+                "split": split,
                 "deployable": True,
             }
         )
@@ -1211,6 +1275,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                 "method": f"{cfg.method_id}_single",
                 "metric": "raw_mae_all",
                 "value": result.document["single"].get("raw_mae_all"),
+                "split": split,
                 "deployable": True,
             }
         )
@@ -1220,24 +1285,28 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                 "method": "sbona_base",
                 "metric": "raw_mae_all",
                 "value": result.document["base"].get("raw_mae_all"),
+                "split": split,
                 "deployable": True,
             },
             {
                 "method": "oracle_mae_offline",
                 "metric": "raw_mae_all",
                 "value": result.document["oracle_mae"].get("raw_mae_all"),
+                "split": split,
                 "deployable": False,
             },
             {
                 "method": "oracle_mse_offline",
                 "metric": "raw_rmse_all",
                 "value": result.document["oracle_mse"].get("raw_rmse_all"),
+                "split": split,
                 "deployable": False,
             },
             {
                 "method": "oracle_cost_offline",
                 "metric": "raw_mae_all",
                 "value": result.document["oracle_cost"].get("raw_mae_all"),
+                "split": split,
                 "deployable": False,
             },
         ]
@@ -1394,9 +1463,13 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
         if args.csv
         else manifest.with_suffix(".aggregate.csv")
     )
-    document = aggregate_experiments(manifest, output, output_csv)
+    document = aggregate_experiments(manifest, output, output_csv, split=args.split)
     print(f"aggregate: {output}")
-    print(f"rows: {document['rows']} groups: {len(document['groups'])}")
+    print(
+        f"split: {document['split']} seed: {document['seed']} "
+        f"rows: {document['rows']} selected: {document['selected_rows']} "
+        f"groups: {len(document['groups'])}"
+    )
     return 0
 
 
@@ -1417,7 +1490,6 @@ def _add_common(parser: argparse.ArgumentParser, *, config_required: bool = True
         help="force the labelled synthetic fixture (config may already enable it)",
     )
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--seed", type=int, default=None)
 
 
 def _add_training(parser: argparse.ArgumentParser) -> None:
@@ -1500,8 +1572,9 @@ def build_parser() -> argparse.ArgumentParser:
     profile.add_argument("--iterations", type=int, default=1000)
     profile.set_defaults(func=cmd_profile)
 
-    aggregate = sub.add_parser("aggregate", help="aggregate experiments.csv rows by seed")
+    aggregate = sub.add_parser("aggregate", help="build the single-seed comparison table")
     aggregate.add_argument("--manifest", type=Path, required=True)
+    aggregate.add_argument("--split", choices=("train", "val", "test"), default="test")
     aggregate.add_argument("--output", type=Path, default=None)
     aggregate.add_argument("--csv", type=Path, default=None)
     aggregate.set_defaults(func=cmd_aggregate)

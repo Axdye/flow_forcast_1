@@ -11,7 +11,7 @@
 | B 模型实现 | v1 已实现（STAEformer 主线） | `src/sbona/backbones/staeformer.py`、`models/`；`tests/unit/test_actions_decoder.py` |
 | C 训练实现 | v1 已实现（A/B/C/D + probe） | `src/sbona/training/`；`tests/integration/test_synthetic_pipeline.py`、`test_cli_synthetic.py` |
 | D 评测实现 | v1 已实现（metrics/oracle/regimes/artifacts/profile） | `src/sbona/evaluation/`；`tests/unit/test_metrics.py`、`test_objectives.py`、`test_regimes.py`、`test_artifacts.py` |
-| CPU 单测/集成测试 | 已执行：77 passed, 1 skipped（不含 opt-in 数据测试） | `python -m pytest -q`；环境 Python 3.11.11、torch 2.2.2、numpy 1.26.4、scipy 1.15.2 |
+| CPU 单测/集成测试 | 已执行：89 passed, 8 skipped（不含 opt-in 数据测试） | `python -m pytest -q`；环境 Python 3.11.11、torch 2.2.2、numpy 1.26.4、scipy 1.15.2 |
 | 静态检查 | 已执行：ruff 无错误 | `ruff check src tests scripts` |
 | GPU smoke | 未执行 | `tests/gpu/test_gpu_smoke.py` 因无 CUDA 跳过；不声称 GPU 结果 |
 | 真实数据审计 | 部分执行，未训练 | PEMS03/04/07/08 与 METR-LA/PEMS-BAY 均完成 `prepare-data`（含日历与 day-of-week）；PEMS08 与 METR-LA 各 2 样本 CPU forward 通过；见 `reviews/DATA_PROVENANCE.md` |
@@ -19,6 +19,7 @@
 | 原始文件 → prepared 对账 | 已执行：7 passed | `SBONA_RAW_DIR=raw pytest tests/integration/test_raw_import_golden.py`；`tests/data/golden_prepared.json` |
 | 真实数据训练/评测 | 未执行 | 无任何真实数据集 checkpoint 或 MAE 结果 |
 | 可路由性与科学有效性 | 未验证 | 尚无真实实验；synthetic 数值不是科学证据 |
+| 实验表格自洽性 | 已修复并回归 | `experiments.csv` 带 `split`；`aggregate --split` 单 seed 建表，拒绝多 seed / 重复行；run 自动发现按身份哈希（seed+method/K），多命中报错。见 `tests/unit/test_run_selection.py`、`test_artifacts.py` |
 | 外部 backbone runtime | 未验证 | STID / Graph WaveNet / AGCRN 仍为 pending |
 | METR-LA / PEMS-BAY | 已接入配置，未训练 | 邻接取自 Zenodo 5724362（CC-BY-4.0）；`derived_binary_undirected` + `data.unit: speed (mph)` + `official_compat_nonzero`；`prepare-data` 与 CPU forward 通过，无指标 |
 | 依赖 lock / CI | 未提供 | `pyproject.toml` 已提供；锁文件与 CI 配置待补 |
@@ -29,7 +30,7 @@
 ```bash
 # 临时 Python 3.11 环境（torch 2.2.2，CPU）
 python -m pytest -q
-# 77 passed, 1 skipped (CUDA unavailable)
+# 89 passed, 8 skipped (CUDA unavailable)
 
 # opt-in：真实上游文件 → prepared 的 golden hash 对账
 SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -q
@@ -40,11 +41,16 @@ ruff check src tests scripts
 
 python -m compileall -q src/sbona
 # OK
+
+# 端到端复现/验证：拿错 checkpoint 与算错聚合结果
+PYTHONPATH=src python scripts/verify_selection.py
+# A/B/C/D 共 13 项全部 PASS
 ```
 
 ## 不能从当前状态推出的结论
 
 - 不能推出 SBoN 在 PEMS08 上有效或优于 baseline。
+- 不能推出 seed 间方差或任何 `mean±std` 结论：当前只跑固定单 seed，聚合不计算方差，`docs/README_EXPERIMENTS.md` §12 的多 seed 合同仍是暂缓项。
 - 不能推出 Router 可学习、oracle 收益可部署。
 - 不能推出 STAEformer 与其他 backbone 等价或兼容。
 - 不能推出 GPU 显存、吞吐或 bf16 行为符合验收要求。

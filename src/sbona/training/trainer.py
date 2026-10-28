@@ -7,9 +7,10 @@ only.  Optimizer steps are skipped for batches with no valid target elements.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -81,6 +82,46 @@ def autocast_context(cfg: Config, device: torch.device):
     return nullcontext()
 
 
+def backbone_identity_payload(cfg: Config) -> dict[str, object]:
+    """What makes two backbones interchangeable: seed, protocol and architecture.
+
+    The adapter method is *not* part of it, so a Base run trained once can serve
+    every adapter stage of the same seed (that is exactly the reuse the experiment
+    plan requires).
+    """
+    return {
+        "role": "backbone",
+        "seed": int(cfg.seed),
+        "protocol_id": str(cfg.protocol_id),
+        "backbone": asdict(cfg.backbone),
+    }
+
+
+def adapter_identity_payload(cfg: Config, num_candidates: int) -> dict[str, object]:
+    """What makes two adapters interchangeable: seed, method/kind, params and K."""
+    return {
+        "role": "adapter",
+        "seed": int(cfg.seed),
+        "protocol_id": str(cfg.protocol_id),
+        "method_id": str(cfg.method_id),
+        "num_candidates": int(num_candidates),
+        "adapter": asdict(cfg.adapter),
+    }
+
+
+def _sha256_payload(payload: dict[str, object]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def backbone_identity_hash(cfg: Config) -> str:
+    return _sha256_payload(backbone_identity_payload(cfg))
+
+
+def adapter_identity_hash(cfg: Config, num_candidates: int) -> str:
+    return _sha256_payload(adapter_identity_payload(cfg, num_candidates))
+
+
 def make_hashes(prepared: PreparedData, cfg: Config, num_candidates: int) -> dict[str, object]:
     """Hash every split (probe schemes may only have ``train``/``val``)."""
     split_items = sorted(prepared.scheme.starts.items())
@@ -97,7 +138,11 @@ def make_hashes(prepared: PreparedData, cfg: Config, num_candidates: int) -> dic
         ]
     )
     return {
+        # ``config_hash`` covers schedule/batch/device too, so it cannot be used
+        # to decide whether a checkpoint may be reused.  These two can.
         "config_hash": cfg.hash,
+        "backbone_identity_hash": backbone_identity_hash(cfg),
+        "adapter_identity_hash": adapter_identity_hash(cfg, num_candidates),
         "data_hash": sha256_array(prepared.data),
         "valid_hash": sha256_array(prepared.valid.astype(np.uint8)),
         "graph_hash": prepared.graph.graph_hash,
@@ -907,6 +952,8 @@ __all__ = [
     "RouterTrainer",
     "resolve_device",
     "make_hashes",
+    "backbone_identity_hash",
+    "adapter_identity_hash",
     "move_input",
     "move_target",
     "autocast_context",

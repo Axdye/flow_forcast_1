@@ -361,6 +361,8 @@ C 的中间 oracle 验证用于候选 checkpoint 选择，不能表述为模型�
 
 checkpoint 临时文件写完后原子 rename，保存 latest 与 best。默认只支持 epoch 边界恢复；中途异常从上一 epoch checkpoint 恢复，不声称逐 batch 精确续训。改变 K/N/图/split/scaler/架构时必须拒绝 resume；warm-start 用独立参数并生成新 run_id。
 
+自动发现 checkpoint（不显式给 `--*-checkpoint` / `--*-run`）只能按**身份哈希**匹配，不能按 mtime 或目录名猜测：backbone 身份 = seed + protocol + backbone 架构；adapter 身份 = seed + protocol + method_id + adapter 参数 + K。Stage A 只用 backbone 身份（Base 必须能被同 seed 的所有 adapter 阶段复用），B/C/D/P 还要求 adapter 身份一致。同一身份匹配到多个 run 时必须报错并列出 run 名，由人决定保留哪个，禁止“取最新”。显式传入 `--*-checkpoint` / `--*-run` 也不能绕过身份校验：Stage B/C 拒绝外来 Base，Stage D 拒绝外来候选，`evaluate` 在读取 checkpoint 后重新核对身份。
+
 Frozen 特征缓存 OPTIONAL：key 必须含 split/sample_id/backbone checkpoint/graph/scaler/feature schema；只有 eval 的冻结模块可缓存。投影器还训练时不能缓存投影后的 hidden。缓存速度不计入在线 inference latency。
 
 ## 11. 推理路径

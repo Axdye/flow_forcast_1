@@ -85,7 +85,17 @@ python -m sbona.cli probe-route --config configs/experiments/pems08_probe.yaml
 python -m sbona.cli train-router --config configs/experiments/pems08_staeformer_k8.yaml
 python -m sbona.cli evaluate --run outputs/RUN_ID --split test --protocol-lock protocol.lock.json
 python -m sbona.cli profile --run outputs/RUN_ID --batch-sizes 1 64
-python -m sbona.cli aggregate --manifest experiments.csv
+python -m sbona.cli aggregate --manifest experiments.csv --split test
+```
+
+`aggregate` 一次只建一个 split 的表（默认 `test`）：`experiments.csv` 的每行都带 `split`，训练期指标记为 `val`，`evaluate` 记为实际评测的 split。**v1 只跑一个固定 seed**（seed 只来自配置，CLI 没有 `--seed`）；因此表里每组 `(dataset, backbone, method, metric)` 只有一条记录，不输出 mean/std，也不把 val 行平均进 test。混入多个 seed、同一 split 出现重复行、缺 `split` 列都会直接报错。多 seed 统计（`docs/README_EXPERIMENTS.md` §12 的 ≥3 seeds、mean±std）属于**暂缓项**，不是已满足项，详见 `reviews/EXTRA_WORK.md` §8.0。
+
+不给 `--*-checkpoint` / `--*-run` 时，CLI 按身份哈希自动找上一阶段 checkpoint：backbone 身份 = seed + protocol + backbone 架构，adapter 身份再加 method_id + adapter 参数 + K（Stage A 只用 backbone 身份，所以同一 Base 可被该 seed 的所有 adapter 阶段复用）。同一身份命中多个 run 会报错并列出目录，由人保留其中一个——不会按修改时间猜，也不会拿别的 seed / 别的 adapter 的权重。显式传入的 `--base-checkpoint` / `--candidate-checkpoint` 同样要过身份校验。
+
+可以不用 GPU、不用真实数据复跑这两类校验：
+
+```bash
+PYTHONPATH=src python scripts/verify_selection.py
 ```
 
 当前仓库已包含 `pyproject.toml`、可运行 CLI、CPU 测试与 GPU smoke 脚本；尚缺真实依赖 lock 与 CI 配置，GPU smoke 未执行。空函数/占位模块不会被当作已实现。

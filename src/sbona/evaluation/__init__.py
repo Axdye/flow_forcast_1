@@ -41,7 +41,6 @@ from sbona.evaluation.regimes import (
     regime_metrics,
 )
 from sbona.evaluation.statistics import (
-    aggregate_seeds,
     block_sign_permutation,
     holm_correction,
     paired_moving_block_bootstrap,
@@ -81,7 +80,6 @@ __all__ = [
     "assign_flow_regime",
     "flow_regime_thresholds",
     "regime_metrics",
-    "aggregate_seeds",
     "block_sign_permutation",
     "holm_correction",
     "paired_moving_block_bootstrap",

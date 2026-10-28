@@ -11,7 +11,7 @@
 - `tasks/TASK_A.md` … `tasks/TASK_D.md`
 - `configs/design_defaults.yaml`
 
-本文件不改变任何合同，也不替代 `reviews/STATUS.md` 与 `reviews/HANDOFF.md`。凡是与合同有张力的事项，单列在 §9。
+本文件不改变任何合同，也不替代 `reviews/STATUS.md` 与 `reviews/HANDOFF.md`。凡是与合同有张力的事项，单列在 §8。
 
 ## 1. 一览
 
@@ -25,10 +25,11 @@
 | X6 | `derived_binary_undirected` 拓扑标签 | 只允许 published 二值图 | `src/sbona/data/graph.py`、`config.py` | 单测：同扩散、不同 `graph_hash` |
 | X7 | `data.unit` 与 `metric_units(unit)` | 只要求 manifest 记单位 | `config.py`、`evaluation/runner.py`、`cli.py` | 单测；prepared manifest 与 `metric_units` 均为 mph |
 | X8 | `data/<NAME>/SOURCE.json` 与 `reviews/DATA_PROVENANCE.md` | 只要求记录来源 | `data/*/SOURCE.json`、`reviews/DATA_PROVENANCE.md` | 文件 hash 与上游下载比对 |
-| X9 | 额外测试 `test_calendar.py`、`test_units_topology.py` | 未规定 | `tests/unit/` | 当前 77 passed, 1 skipped |
+| X9 | 额外测试 `test_calendar.py`、`test_units_topology.py` | 未规定 | `tests/unit/` | 当前 89 passed, 8 skipped |
 | X10 | `scripts/fetch_data.py` + `provenance/raw_sources.json` | 只要求“记录来源”，未要求可下载/可校验 | `scripts/fetch_data.py`、`provenance/raw_sources.json` | 全量下载六个数据集并逐字节校验 |
 | X11 | `scripts/import_raw.py`（上游格式 → prepare 布局） | 未规定 | `scripts/import_raw.py` | 六数据集导入并与审计 hash 对齐 |
 | X12 | `tests/data/golden_prepared.json` + `test_raw_import_golden.py` | 未规定 | `tests/data/`、`tests/integration/` | 7 passed（真实上游文件） |
+| X13 | 单 seed 化 + split 列 + 身份哈希选 run | 原计划要求 ≥3 seeds、mean±std | `src/sbona/cli.py`、`training/trainer.py`、`evaluation/artifacts.py`、`tests/unit/test_run_selection.py` | 89 passed；4 类“拿错 checkpoint / 算错结果”缺陷已复现并修复 |
 | F1 | `.gitignore` 误伤 `src/sbona/data/` | —（缺陷） | `.gitignore` | 修复后源码包进入版本控制 |
 | F2 | `.gitignore` 补 `/raw/` | —（配套） | `.gitignore` | 原始下载目录不入库 |
 
@@ -175,6 +176,42 @@ SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -
 
 这七个断言覆盖：序列数值、缺失/零值掩码、图上边集、窗口切分、train-only 标定、节点顺序、日历表。任一上游文件被替换或转换逻辑被改动都会失败。
 
+### X13 单 seed 化、split 列与身份哈希选 run
+
+**做了什么**
+
+1. **seed 只有一个来源**：`configs/experiments/*.yaml` 的 `seed`。删除了 `train-*` / `evaluate` 的 `--seed` 覆盖，避免训练完再用 CLI 改标 seed。
+2. **`experiments.csv` 增加 `split` 列**，写入处共 5 个（Base/single/C/D 训练期为 `val`，`evaluate` 用实际 `--split`）。`aggregate --split {train,val,test}`（默认 `test`）只建该 split 的表，val/train 不再混进主表。
+3. **`aggregate` 不再按 seed 求均值**：删除 `aggregate_seeds`。每组 `(dataset, backbone, method, metric)` 只允许一行；同组重复行、CSV 含多个 seed、缺 `split` 列都直接报错，而不是被当成独立重复。
+4. **自动选 run 改为身份哈希**：
+   - `backbone_identity_hash` = seed + protocol + backbone 架构（**不含 method**，否则 `pems08_staeformer.yaml` 训出的 Base 无法被 `pems08_single.yaml` 复用）；
+   - `adapter_identity_hash` = seed + protocol + method_id + adapter 参数 + K；
+   - Stage A 只比 backbone 身份，B/C/D/P 还比 adapter 身份；
+   - 同一身份命中多个 run 时报错并列出 run 名，不再按 mtime 取“最新”；
+   - `--kind` 非默认（如 `independent_heads`）时，Stage C 的 `method_id` 自动带后缀，避免与主方法共用身份；
+   - 显式 `--base-checkpoint` / `--candidate-checkpoint` 也校验身份：Stage B/C 拒绝别的 seed/架构的 Base，Stage D 拒绝别的 seed/method/K 的候选，`evaluate` 读取后重新核对。
+
+**复现过的四个缺陷**（修复前均可用脚本稳定复现）
+
+| 缺陷 | 修复前 | 修复后 |
+|---|---|---|
+| 请求 seed 11 的 Base | 返回 seed 22（目录更新） | 只返回 seed 11；无匹配则 `FileNotFoundError` |
+| 请求 structured 候选 | 返回 independent_heads | 按 adapter 身份区分；同身份多命中报错 |
+| 请求 seed 11 的 Router | 返回 seed 22 | 按 seed 区分；无匹配返回 `None` |
+| 单 seed 的 val+test 两行 | `seeds=2, mean=1.0, std=0.283` | 只取 `split=test` 一行；重复行报错 |
+
+验证：`tests/unit/test_run_selection.py`（8 项）、`tests/unit/test_artifacts.py`（单 seed / split / 重复行），以及 `scripts/verify_selection.py` 端到端脚本（13 项全部 PASS，可用 `PYTHONPATH=src python scripts/verify_selection.py` 复跑）。全量 `pytest -q`：89 passed, 8 skipped。
+
+**对旧产物的处理（fail closed）**
+
+- 旧 checkpoint 的 `hashes` 没有 `backbone_identity_hash` / `adapter_identity_hash`，`resume` 与自动发现都会拒绝它（而不是退回“差不多就用”）；必须重训或显式传 `--*-checkpoint`（显式路径仍会走 hash 校验，因此同样会被拒）。
+- 旧 `outputs/experiments.csv` 没有 `split` 列，继续 append 会把旧行的 split 写空；现在遇到旧表头直接报错，要求先移走旧表或重跑对应评测。
+- `aggregate` 遇到旧 CSV 给出“missing columns: ['split']”，`--split` 不会去猜。
+
+**为什么算计划外**
+
+合同写了“必须校验数据/图/split/scaler/K/架构”，但没有规定“怎么在多 run 目录里找唯一那个 checkpoint”，也没有规定 `experiments.csv` 的 split 语义。原实现按目录 mtime 取最新、按 seed 求均值，在多 seed / 多 split 下会静默拿错模型或算出不存在的方差。
+
 ## 3. 数据集扩展
 
 ### X4 PEMS03/04/07 配置
@@ -281,12 +318,12 @@ SBONA_RAW_DIR=raw python -m pytest tests/integration/test_raw_import_golden.py -
 新增两个测试文件：
 
 - `tests/unit/test_calendar.py`（7 项）：`[M, 2]` 表、tod/dow 范围、文件读写、长度不匹配、配置冲突、prepare 集成、签名随日历变化。
-- `tests/unit/test_units_topology.py`（6 项）：派生拓扑被接受、同扩散不同 hash、未知拓扑拒绝、`data.unit`、空 unit 拒绝、指标单位跟随。
+- `tests/unit/test_units_topology.py`（7 项）：派生拓扑被接受、同扩散不同 hash、未知拓扑拒绝、`data.unit`、空 unit 拒绝、指标单位跟随。
 
 当前总结果：
 
 ```text
-pytest -q  -> 77 passed, 8 skipped
+pytest -q  -> 89 passed, 8 skipped
               (8 = GPU smoke 无 CUDA + 7 个 opt-in 原始数据 golden 测试)
 SBONA_RAW_DIR=raw pytest tests/integration/test_raw_import_golden.py -q -> 7 passed
 ruff check src tests scripts -> All checks passed
@@ -309,6 +346,9 @@ ruff check src tests scripts -> All checks passed
 
 ## 8. 已知偏离 / 需要审查确认
 
+0. **当前只有单 seed，尚未满足 `docs/README_EXPERIMENTS.md` §12 的统计合同。**
+   该节要求每个种子单独展示、主表 mean±sample std（ddof=1）、至少 3 seeds。当前实现按用户决定**先固定一个 seed**（seed 只来自配置，CLI 不提供 `--seed`，因此无法事后改标），`aggregate` 每组只输出一条记录并拒绝多 seed / 重复行，**不计算也不声称 seed 间方差**。这属于“暂缓”，不是“满足”：在拿到 Router 相对 single 的初步收益并确认值得扩展之前，任何表格都不得写 mean±std 或显著性结论。
+   恢复多 seed 时的最小改动：配置层引入 seed 列表、`aggregate_experiments` 按 `(dataset, backbone, method, metric, split)` 分组重算 mean/std、并恢复 `--seed` 只作为“选择已有 run”而非改标手段。
 1. **配置 `schema_version` 未从 1 升到 2。**
    新增的 `data.unit`、`data.timestamps_file` 都是可选键且有默认值，旧配置无需修改；但设计 §14 写的是“配置/输出 schema 升级必须增加版本号”。本轮判断“加可选键、不改既有键语义”不构成强制升级，因此保留 1。
    如果审查认为任何加键都必须升版本，应在一次提交内把 `Config.schema_version` 提到 2，并同步所有 `configs/experiments/*.yaml`、测试 fixture 与文档；不要只改代码默认值。
